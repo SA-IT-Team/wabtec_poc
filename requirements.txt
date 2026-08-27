@@ -1,0 +1,11 @@
+azure-functions>=1.21.0
+azure-ai-documentintelligence>=1.0.0
+azure-storage-blob>=12.19.0
+azure-data-tables>=12.5.0
+azure-core>=1.30.0
+openai>=1.40.0
+pydantic>=2.7.0
+tenacity>=8.2.3
+PyMuPDF>=1.24.0
+Pillow>=10.3.0
+openpyxl>=3.1.2

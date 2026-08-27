@@ -1,0 +1,22 @@
+{
+  "balloons": [
+    {
+      "balloon_number": 12,
+      "page": 1,
+      "nominal_value": 25.4,
+      "unit": "mm",
+      "tolerance_type": "bilateral",
+      "upper_tol": 0.05,
+      "lower_tol": -0.05,
+      "gdt": null,
+      "confidence": 0.94
+    },
+    {
+      "balloon_number": 13,
+      "page": 1,
+      "nominal_value": null,
+      "gdt": { "symbol": "position", "value": 0.1, "modifiers": ["MMC"], "datums": ["A", "B", "C"] },
+      "confidence": 0.81
+    }
+  ]
+}

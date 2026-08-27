@@ -1,0 +1,828 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ballooned Drawing Requirements</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+</head>
+<body>
+<style>
+  :root{
+    --bg:#F5F3EE;
+    --surface:#FFFFFF;
+    --surface-2:#ECE8DE;
+    --ink:#1C2431;
+    --ink-soft:#5B6472;
+    --ink-faint:#8A8F98;
+    --line:#DBD6C9;
+    --accent:#C1571F;
+    --accent-ink:#7A3512;
+    --accent-soft:#F0DCC8;
+    --good:#3E7D5A;
+    --good-soft:#DEEBE2;
+    --out:#9B4A3D;
+    --out-soft:#F1DED9;
+    --warn:#96700A;
+    --warn-soft:#F3E7C9;
+    --mono-bg:#EFECE1;
+    --shadow: 0 1px 2px rgba(28,36,49,.06), 0 8px 24px -12px rgba(28,36,49,.18);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#12161D;
+      --surface:#191E27;
+      --surface-2:#1F2530;
+      --ink:#E8E5DB;
+      --ink-soft:#9CA4B0;
+      --ink-faint:#6C7480;
+      --line:#2B3240;
+      --accent:#E58A4C;
+      --accent-ink:#F4C69B;
+      --accent-soft:#3A2A1C;
+      --good:#74C097;
+      --good-soft:#1D2E25;
+      --out:#D68A7C;
+      --out-soft:#332120;
+      --warn:#E3BE5B;
+      --warn-soft:#332C16;
+      --mono-bg:#1B2029;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 12px 28px -14px rgba(0,0,0,.6);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#12161D;
+    --surface:#191E27;
+    --surface-2:#1F2530;
+    --ink:#E8E5DB;
+    --ink-soft:#9CA4B0;
+    --ink-faint:#6C7480;
+    --line:#2B3240;
+    --accent:#E58A4C;
+    --accent-ink:#F4C69B;
+    --accent-soft:#3A2A1C;
+    --good:#74C097;
+    --good-soft:#1D2E25;
+    --out:#D68A7C;
+    --out-soft:#332120;
+    --warn:#E3BE5B;
+    --warn-soft:#332C16;
+    --mono-bg:#1B2029;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 12px 28px -14px rgba(0,0,0,.6);
+  }
+
+  *{box-sizing:border-box;}
+  body{margin:0;}
+  .doc{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:"Public Sans", ui-sans-serif, system-ui, sans-serif;
+    line-height:1.6;
+    min-height:100%;
+  }
+  h1,h2,h3{
+    font-family:"Big Shoulders Display", "Arial Narrow", sans-serif;
+    font-weight:700;
+    text-transform:uppercase;
+    letter-spacing:.02em;
+    text-wrap:balance;
+    color:var(--ink);
+    margin:0;
+  }
+  code, .mono, .id-badge, table td.num, .gwt{
+    font-family:"IBM Plex Mono", ui-monospace, "SF Mono", monospace;
+  }
+  a{color:var(--accent-ink);}
+
+  /* ---------- Title block ---------- */
+  .titleblock{
+    border-bottom:2px solid var(--ink);
+    background:var(--surface-2);
+    padding:2.25rem clamp(1.25rem,4vw,3rem) 1.5rem;
+  }
+  .titleblock .eyebrow{
+    font-family:"IBM Plex Mono", monospace;
+    font-size:.72rem;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--accent-ink);
+    margin:0 0 .6rem;
+  }
+  .titleblock h1{
+    font-size:clamp(2.1rem,4.4vw,3.1rem);
+    line-height:1.02;
+    max-width:16ch;
+  }
+  .titleblock .sub{
+    margin:.85rem 0 0;
+    max-width:62ch;
+    color:var(--ink-soft);
+    font-size:1.02rem;
+  }
+  .tb-grid{
+    margin-top:1.5rem;
+    display:grid;
+    grid-template-columns:repeat(4,minmax(120px,1fr));
+    border:1px solid var(--line);
+    background:var(--surface);
+    box-shadow:var(--shadow);
+  }
+  .tb-cell{
+    padding:.6rem .85rem;
+    border-right:1px solid var(--line);
+  }
+  .tb-cell:last-child{border-right:none;}
+  .tb-cell .k{
+    font-size:.66rem;
+    letter-spacing:.1em;
+    text-transform:uppercase;
+    color:var(--ink-faint);
+    display:block;
+    margin-bottom:.2rem;
+  }
+  .tb-cell .v{
+    font-family:"IBM Plex Mono", monospace;
+    font-size:.86rem;
+    color:var(--ink);
+  }
+
+  /* ---------- Layout: sidebar + content ---------- */
+  .layout{
+    display:grid;
+    grid-template-columns:250px minmax(0,1fr);
+    gap:0;
+    max-width:1180px;
+    margin:0 auto;
+  }
+  nav.toc{
+    padding:2rem 1.25rem 3rem;
+    position:sticky;
+    top:0;
+    align-self:start;
+    max-height:100vh;
+    overflow-y:auto;
+    border-right:1px solid var(--line);
+  }
+  nav.toc .toc-title{
+    font-size:.68rem;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--ink-faint);
+    margin:0 0 .9rem;
+  }
+  nav.toc ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.15rem;}
+  nav.toc a{
+    display:flex;
+    align-items:center;
+    gap:.6rem;
+    text-decoration:none;
+    color:var(--ink-soft);
+    font-size:.86rem;
+    padding:.32rem .4rem;
+    border-radius:4px;
+  }
+  nav.toc a:hover{color:var(--ink); background:var(--surface-2);}
+  nav.toc .b{
+    flex:none;
+    width:1.55rem;height:1.55rem;
+    border-radius:50%;
+    border:1.5px solid var(--ink-faint);
+    display:flex;align-items:center;justify-content:center;
+    font-family:"IBM Plex Mono", monospace;
+    font-size:.68rem;
+    color:var(--ink-faint);
+  }
+
+  main{padding:2.5rem clamp(1.25rem,4vw,3.5rem) 6rem; min-width:0;}
+  section{
+    padding-top:2.75rem;
+    margin-top:2.75rem;
+    border-top:1px solid var(--line);
+    scroll-margin-top:1.5rem;
+  }
+  section:first-of-type{border-top:none;margin-top:1rem;padding-top:0;}
+
+  .sec-head{display:flex; align-items:baseline; gap:.9rem; margin-bottom:1.1rem;}
+  .balloon{
+    flex:none;
+    width:2.5rem;height:2.5rem;
+    border-radius:50%;
+    border:2px solid var(--accent);
+    color:var(--accent-ink);
+    display:flex;align-items:center;justify-content:center;
+    font-family:"IBM Plex Mono", monospace;
+    font-weight:600;
+    font-size:1.02rem;
+    background:var(--accent-soft);
+  }
+  .sec-head h2{font-size:clamp(1.3rem,2.4vw,1.7rem);}
+
+  p{margin:.75rem 0; max-width:72ch;}
+  .lede{color:var(--ink-soft); font-size:1.02rem; max-width:68ch;}
+  ul, ol.plain{margin:.75rem 0; padding-left:1.3rem; max-width:70ch;}
+  li{margin:.35rem 0;}
+  strong{color:var(--ink); font-weight:600;}
+
+  /* ---------- cards / grids ---------- */
+  .cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:1rem; margin-top:1.25rem;}
+  .card{
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:6px;
+    padding:1.1rem 1.2rem;
+    box-shadow:var(--shadow);
+  }
+  .card h3{font-size:1rem; letter-spacing:.01em; margin-bottom:.4rem;}
+  .card .role{
+    font-family:"IBM Plex Mono", monospace;
+    font-size:.7rem;
+    color:var(--accent-ink);
+    text-transform:uppercase;
+    letter-spacing:.08em;
+    display:block;
+    margin-bottom:.5rem;
+  }
+  .card p{font-size:.92rem; color:var(--ink-soft); margin:.4rem 0;}
+  .card .needs{font-size:.86rem; margin-top:.6rem; padding-top:.6rem; border-top:1px dashed var(--line);}
+  .card .needs b{display:block; font-size:.68rem; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-faint); font-weight:600; margin-bottom:.3rem;}
+
+  /* ---------- scope panels ---------- */
+  .scope{display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin-top:1.25rem;}
+  .scope-panel{border-radius:6px; padding:1.1rem 1.3rem; border:1px solid var(--line);}
+  .scope-panel.in{background:var(--good-soft); border-color:color-mix(in srgb, var(--good) 35%, var(--line));}
+  .scope-panel.out{background:var(--out-soft); border-color:color-mix(in srgb, var(--out) 35%, var(--line));}
+  .scope-panel h3{font-size:.8rem; letter-spacing:.08em; text-transform:uppercase; margin-bottom:.7rem;}
+  .scope-panel.in h3{color:var(--good);}
+  .scope-panel.out h3{color:var(--out);}
+  .scope-panel ul{margin:0; padding-left:1.1rem;}
+  .scope-panel li{font-size:.92rem; margin:.4rem 0;}
+
+  /* ---------- tables ---------- */
+  .twrap{overflow-x:auto; margin-top:1.25rem; border:1px solid var(--line); border-radius:6px; background:var(--surface); box-shadow:var(--shadow);}
+  table{border-collapse:collapse; width:100%; min-width:560px; font-size:.9rem;}
+  thead th{
+    text-align:left;
+    font-family:"IBM Plex Mono", monospace;
+    font-size:.68rem;
+    letter-spacing:.08em;
+    text-transform:uppercase;
+    color:var(--ink-faint);
+    padding:.65rem .9rem;
+    background:var(--surface-2);
+    border-bottom:1px solid var(--line);
+    white-space:nowrap;
+  }
+  tbody td{
+    padding:.65rem .9rem;
+    border-bottom:1px solid var(--line);
+    vertical-align:top;
+    color:var(--ink);
+  }
+  tbody tr:last-child td{border-bottom:none;}
+  tbody tr:hover{background:var(--surface-2);}
+  td .fid{
+    display:inline-flex; align-items:center; justify-content:center;
+    min-width:2.5rem; padding:.15rem .5rem;
+    border-radius:999px;
+    border:1.5px solid var(--accent);
+    color:var(--accent-ink);
+    font-family:"IBM Plex Mono", monospace;
+    font-size:.76rem; font-weight:600;
+    background:var(--accent-soft);
+  }
+  .pri{font-family:"IBM Plex Mono", monospace; font-size:.72rem; letter-spacing:.05em; padding:.1rem .5rem; border-radius:4px;}
+  .pri.must{background:var(--good-soft); color:var(--good);}
+  .pri.should{background:var(--warn-soft); color:var(--warn);}
+  .pri.could{background:var(--surface-2); color:var(--ink-faint); border:1px solid var(--line);}
+
+  /* ---------- callouts ---------- */
+  .callout{
+    margin-top:1.25rem;
+    border-left:3px solid var(--accent);
+    background:var(--accent-soft);
+    padding:.9rem 1.15rem;
+    border-radius:0 6px 6px 0;
+  }
+  .callout.warn{border-color:var(--warn); background:var(--warn-soft);}
+  .callout p{margin:.3rem 0; font-size:.92rem;}
+  .callout .lbl{
+    font-family:"IBM Plex Mono", monospace;
+    font-size:.68rem; letter-spacing:.1em; text-transform:uppercase;
+    color:var(--accent-ink); display:block; margin-bottom:.3rem;
+  }
+  .callout.warn .lbl{color:var(--warn);}
+
+  /* ---------- workflow ---------- */
+  .flow{
+    margin-top:1.5rem;
+    display:flex;
+    flex-direction:column;
+    gap:0;
+  }
+  .flow-step{
+    display:grid;
+    grid-template-columns:2.5rem 1fr;
+    gap:1rem;
+    position:relative;
+    padding-bottom:1.4rem;
+  }
+  .flow-step:last-child{padding-bottom:0;}
+  .flow-step::before{
+    content:"";
+    position:absolute;
+    left:1.24rem; top:2.5rem; bottom:0;
+    width:1.5px;
+    background:var(--line);
+  }
+  .flow-step:last-child::before{display:none;}
+  .flow-num{
+    width:2.5rem;height:2.5rem;border-radius:50%;
+    background:var(--surface); border:1.5px solid var(--ink-soft);
+    display:flex; align-items:center; justify-content:center;
+    font-family:"IBM Plex Mono", monospace; font-size:.85rem; font-weight:600;
+    color:var(--ink-soft); flex:none; z-index:1;
+  }
+  .flow-body h4{font-family:"Public Sans"; font-size:.98rem; font-weight:600; margin:0 0 .25rem; color:var(--ink);}
+  .flow-body p{margin:0; font-size:.88rem; color:var(--ink-soft); max-width:64ch;}
+  .flow-body .gate{
+    display:inline-block; margin-top:.4rem; font-family:"IBM Plex Mono", monospace;
+    font-size:.68rem; letter-spacing:.06em; text-transform:uppercase;
+    color:var(--out); background:var(--out-soft); padding:.15rem .5rem; border-radius:4px;
+  }
+
+  /* ---------- acceptance criteria ---------- */
+  .gwt-block{
+    border:1px solid var(--line);
+    border-radius:6px;
+    background:var(--surface);
+    margin-top:1.1rem;
+    box-shadow:var(--shadow);
+    overflow:hidden;
+  }
+  .gwt-block .gwt-title{
+    padding:.7rem 1.1rem;
+    background:var(--surface-2);
+    border-bottom:1px solid var(--line);
+    font-weight:600; font-size:.92rem;
+  }
+  .gwt-body{padding:.9rem 1.1rem; font-size:.88rem;}
+  .gwt-body .ln{display:flex; gap:.6rem; margin:.35rem 0;}
+  .gwt-body .k{
+    font-family:"IBM Plex Mono", monospace; font-weight:600; font-size:.76rem;
+    color:var(--accent-ink); flex:none; width:4.3rem; padding-top:.1rem;
+  }
+  .gwt-body .v{color:var(--ink);}
+
+  footer.doc-foot{
+    padding:2.5rem clamp(1.25rem,4vw,3.5rem) 3rem;
+    color:var(--ink-faint);
+    font-size:.78rem;
+    border-top:1px solid var(--line);
+  }
+
+  @media (max-width: 880px){
+    .layout{grid-template-columns:1fr;}
+    nav.toc{position:relative; max-height:none; border-right:none; border-bottom:1px solid var(--line);}
+    .tb-grid{grid-template-columns:repeat(2,1fr);}
+    .scope{grid-template-columns:1fr;}
+  }
+</style>
+
+<div class="doc">
+
+  <div class="titleblock">
+    <p class="eyebrow">Product Requirements Document</p>
+    <h1>Ballooned Drawing Dimension &amp; Tolerance Data Extraction</h1>
+    <p class="sub">A working requirements baseline for a system that turns ballooned engineering drawings into a verified, structured record of every dimension and tolerance — ready for first article inspection, PPAP, and CMM programming.</p>
+    <div class="tb-grid">
+      <div class="tb-cell"><span class="k">Doc No.</span><span class="v">BDX-PRD-001</span></div>
+      <div class="tb-cell"><span class="k">Rev</span><span class="v">A — Draft</span></div>
+      <div class="tb-cell"><span class="k">Date</span><span class="v">2026-08-26</span></div>
+      <div class="tb-cell"><span class="k">Prepared by</span><span class="v">Product &amp; BA</span></div>
+    </div>
+  </div>
+
+  <div class="layout">
+    <nav class="toc" aria-label="Table of contents">
+      <p class="toc-title">Contents</p>
+      <ol>
+        <li><a href="#s1"><span class="b">1</span>Executive Summary</a></li>
+        <li><a href="#s2"><span class="b">2</span>Goals &amp; Objectives</a></li>
+        <li><a href="#s3"><span class="b">3</span>Personas &amp; Use Cases</a></li>
+        <li><a href="#s4"><span class="b">4</span>In / Out of Scope</a></li>
+        <li><a href="#s5"><span class="b">5</span>Stakeholders</a></li>
+        <li><a href="#s6"><span class="b">6</span>Assumptions &amp; Constraints</a></li>
+        <li><a href="#s7"><span class="b">7</span>Functional Requirements</a></li>
+        <li><a href="#s8"><span class="b">8</span>Non-Functional Reqs</a></li>
+        <li><a href="#s9"><span class="b">9</span>Security Requirements</a></li>
+        <li><a href="#s10"><span class="b">10</span>High-Level Workflow</a></li>
+        <li><a href="#s11"><span class="b">11</span>Testing Requirements</a></li>
+        <li><a href="#s12"><span class="b">12</span>Edge Cases &amp; Errors</a></li>
+        <li><a href="#s13"><span class="b">13</span>Acceptance Criteria</a></li>
+        <li><a href="#s14"><span class="b">14</span>Open Questions</a></li>
+      </ol>
+    </nav>
+
+    <main>
+
+      <!-- 1 -->
+      <section id="s1">
+        <div class="sec-head"><span class="balloon">1</span><h2>Executive Summary</h2></div>
+        <p class="lede">The system converts ballooned engineering drawings into a fully reconciled, structured Excel record — every balloon number correctly mapped to its dimension, tolerance, and GD&amp;T data — so quality teams can produce accurate first-article and inspection reports in a fraction of the time a manual transcription takes, with zero tolerance for silent data errors.</p>
+      </section>
+
+      <!-- 2 -->
+      <section id="s2">
+        <div class="sec-head"><span class="balloon">2</span><h2>Goals &amp; Objectives</h2></div>
+        <ul>
+          <li><strong>Eliminate manual transcription error.</strong> Replace hand-keying of dimensions and tolerances from drawing to spreadsheet — the largest source of FAI/PPAP rework — with a verified, traceable extraction pipeline.</li>
+          <li><strong>Cut cycle time per drawing.</strong> Reduce the time to produce a ballooned characteristic list from hours to minutes for drawings of typical complexity (50–150 balloons).</li>
+          <li><strong>Guarantee 100% balloon-to-data reconciliation.</strong> No record leaves the system unless every balloon on the drawing has a matching row, and every row traces back to a specific balloon and drawing zone.</li>
+          <li><strong>Produce audit-ready output.</strong> Every exported Excel file must be defensible in a customer or regulatory audit: who extracted it, who verified it, against which drawing revision.</li>
+          <li><strong>Fit existing quality workflows.</strong> Output structure should map cleanly onto standard forms already in use (e.g., AS9102 Form 3, PPAP ballooned drawing / characteristic matrix) rather than force a new format on downstream consumers.</li>
+        </ul>
+      </section>
+
+      <!-- 3 -->
+      <section id="s3">
+        <div class="sec-head"><span class="balloon">3</span><h2>Personas &amp; Core Use Cases</h2></div>
+        <p class="lede">Three roles touch the system across a drawing's life: the person doing the extraction, the person checking it, and the person who owns the deliverable.</p>
+        <div class="cards">
+          <div class="card">
+            <span class="role">Primary user</span>
+            <h3>FAI / Quality Analyst</h3>
+            <p>Uploads ballooned drawings, runs extraction, and works balloon-by-balloon to confirm nominal values, tolerances, and GD&amp;T callouts before handoff.</p>
+            <div class="needs"><b>Core use case</b>Turn a 120-balloon aerospace drawing into a complete Form 3 characteristic list in under an hour, with confidence every value is correct.</div>
+          </div>
+          <div class="card">
+            <span class="role">Verifier</span>
+            <h3>QC Reviewer / Inspector</h3>
+            <p>Performs the independent second-pass reconciliation against the source drawing before a package can be signed off and exported.</p>
+            <div class="needs"><b>Core use case</b>Step through every flagged or auto-extracted balloon side-by-side with the drawing and either confirm or correct it, with disagreements logged.</div>
+          </div>
+          <div class="card">
+            <span class="role">Owner</span>
+            <h3>Quality / Program Manager</h3>
+            <p>Doesn't touch individual balloons — needs status across a batch of drawings, sign-off history, and exportable packages for a customer submission.</p>
+            <div class="needs"><b>Core use case</b>Confirm all drawings for a submission package are reconciled and signed off, then export the full package on demand.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 4 -->
+      <section id="s4">
+        <div class="sec-head"><span class="balloon">4</span><h2>In-Scope &amp; Out-of-Scope</h2></div>
+        <div class="scope">
+          <div class="scope-panel in">
+            <h3>In Scope</h3>
+            <ul>
+              <li>Ingesting ballooned drawings supplied as PDF or high-resolution raster image (TIFF/PNG/JPEG)</li>
+              <li>Detecting existing balloon annotations and OCR-reading their numbers</li>
+              <li>Extracting linear, angular, and geometric dimensions with their tolerance values (bilateral, unilateral, limit, GD&amp;T frames)</li>
+              <li>Mapping each balloon to drawing metadata: drawing number, revision, sheet, zone</li>
+              <li>Structured Excel export against a configurable template</li>
+              <li>Manual correction UI with side-by-side drawing/data view</li>
+              <li>Independent second-reviewer reconciliation workflow with sign-off gate</li>
+              <li>Full audit trail (who extracted, who verified, timestamps, source file version)</li>
+            </ul>
+          </div>
+          <div class="scope-panel out">
+            <h3>Out of Scope (v1)</h3>
+            <ul>
+              <li>Auto-ballooning drawings that arrive <em>without</em> existing balloons (treated as an open question — see §14)</li>
+              <li>Native CAD file parsing (SolidWorks, NX, CATIA) — PDF/raster only in v1</li>
+              <li>Direct CMM program generation from extracted data</li>
+              <li>Automated GD&amp;T compliance checking or design validation</li>
+              <li>Redlining or markup of the drawing itself</li>
+              <li>Multi-language OCR beyond English-language title blocks and notes</li>
+              <li>Full PLM/ERP write-back integration (read-only reference links only)</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- 5 -->
+      <section id="s5">
+        <div class="sec-head"><span class="balloon">5</span><h2>Stakeholders</h2></div>
+        <div class="twrap">
+          <table>
+            <thead><tr><th>Stakeholder</th><th>Interest</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Quality Analysts / FAI Team</strong></td><td>Daily users; need speed and low friction correcting extraction results.</td></tr>
+              <tr><td><strong>QC Reviewers / Inspectors</strong></td><td>Own the reconciliation gate; need a fast, reliable comparison view.</td></tr>
+              <tr><td><strong>Quality Manager</strong></td><td>Accountable for on-time, defensible submission packages; needs batch visibility.</td></tr>
+              <tr><td><strong>Customer / Auditor (external)</strong></td><td>Consumes the exported Excel; needs traceability back to the exact drawing revision.</td></tr>
+              <tr><td><strong>Engineering / Drawing Owner</strong></td><td>Source-of-truth authority on the drawing; escalation point for ambiguous callouts.</td></tr>
+              <tr><td><strong>IT / Security</strong></td><td>Responsible for protecting proprietary and potentially export-controlled drawing IP.</td></tr>
+              <tr><td><strong>Product / Engineering (build team)</strong></td><td>Owns delivery of extraction accuracy, UI, and export fidelity against this document.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- 6 -->
+      <section id="s6">
+        <div class="sec-head"><span class="balloon">6</span><h2>Assumptions &amp; Constraints</h2></div>
+        <div class="cards">
+          <div class="card">
+            <h3>Assumptions</h3>
+            <ul>
+              <li>Drawings arrive already ballooned by the customer or a prior process step.</li>
+              <li>Drawings follow ASME Y14.5 or ISO 1101 GD&amp;T conventions.</li>
+              <li>Source files are text-layer PDFs or scans of at least 300 DPI; lower-quality scans degrade extraction accuracy and route to manual entry.</li>
+              <li>One Excel template family (configurable per customer/program) covers initial launch; exotic customer-specific layouts are handled by template configuration, not code changes.</li>
+              <li>Human review remains mandatory for sign-off in v1 — extraction accelerates data entry, it does not replace verification.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>Constraints</h3>
+            <ul>
+              <li>Drawings are proprietary and, for defense/aerospace programs, potentially export-controlled (ITAR/EAR) — this bounds hosting, storage location, and any third-party AI/OCR service used.</li>
+              <li>The 100% reconciliation goal (§2) means no automated shortcut may bypass the second-reviewer gate before export.</li>
+              <li>Extraction quality is bounded by source scan quality; the system cannot guarantee accuracy on illegible source material — it must detect and flag it instead.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- 7 -->
+      <section id="s7">
+        <div class="sec-head"><span class="balloon">7</span><h2>Functional Requirements</h2></div>
+        <p class="lede">Numbered as <span class="mono">FR-##</span>. Priority: <span class="pri must">MUST</span> ships in v1, <span class="pri should">SHOULD</span> targeted for v1 if feasible, <span class="pri could">COULD</span> candidate for a later release.</p>
+
+        <p><strong>Drawing ingestion &amp; management</strong></p>
+        <div class="twrap"><table>
+          <thead><tr><th>ID</th><th>Requirement</th><th>Priority</th></tr></thead>
+          <tbody>
+            <tr><td><span class="fid">01</span></td><td>The system shall accept drawing uploads in PDF, TIFF, PNG, and JPEG, individually or as a batch (.zip).</td><td><span class="pri must">MUST</span></td></tr>
+            <tr><td><span class="fid">02</span></td><td>On upload, the system shall extract title-block metadata (drawing number, revision, sheet count, title) via OCR and present it for user confirmation before processing continues.</td><td><span class="pri must">MUST</span></td></tr>
+            <tr><td><span class="fid">03</span></td><td>The system shall reject or flag files below a configurable resolution/quality threshold rather than silently processing them.</td><td><span class="pri must">MUST</span></td></tr>
+            <tr><td><span class="fid">04</span></td><td>The system shall version drawings by revision letter/number and prevent a newer revision from silently overwriting a prior reconciled record — it must create a new linked version instead.</td><td><span class="pri must">MUST</span></td></tr>
+            <tr><td><span class="fid">05</span></td><td>The system shall support multi-sheet drawings, preserving sheet number against every extracted balloon.</td><td><span class="pri must">MUST</span></td></tr>
+          </tbody>
+        </table></div>
+
+        <p><strong>Balloon detection &amp; mapping</strong></p>
+        <div class="twrap"><table>
+          <thead><tr><th>ID</th><th>Requirement</th><th>Priority</th></tr></thead>
+          <tbody>
+            <tr><td><span class="fid">06</span></td><td>The system shall automatically detect existing balloon annotations (circled/flagged numbers) on the drawing and OCR-read each balloon's number.</td><td><span class="pri must">MUST</span></td></tr>
+            <tr><td><span class="fid">07</span></td><td>The system shall record, for every detected balloon, its pixel/coordinate location and drawing zone reference, so it can be re-displayed on the source image during review.</td><td><span class="pri must">MUST</span></td></tr>
+            <tr><td><span class="fid">08</span></td><td>The system shall detect duplicate balloon numbers on a single drawing and flag them for user resolution rather than silently keeping one.</td><td><span class="pri must">MUST</span></td></tr>
+            <tr><td><span class="fid">09</span></td><td>The system shall allow a user to manually add, move, renumber, or delete a balloon mapping when auto-detection misses or misreads one.</td><td><span class="pri must">MUST</span></td></tr>
+            <tr><td><span class="fid">10</span></td><td>The system shall report, per drawing, the count of balloons detected on the image versus rows in the extracted table, and block export while the two disagree.</td><td><span class="pri must">MUST</span></td></tr>
+          </tbody>
+        </table></div>
+
+        <p><strong>Dimension &amp; tolerance extraction</strong></p>
+        <div class="twrap"><table>
+          <thead><tr><th>ID</th><th>Requirement</th><th>Priority</th></tr></thead>
+          <tbody>
+            <tr><td><span class="fid">11</span></td><td>For each balloon, the system shall extract the associated nominal dimension value and its unit (mm/in), inferring units from the title block when not explicit on the callout.</td><td><span class="pri must">MUST</span></td></tr>
+            <tr><td><span class="fid">12</span></td><td>The system shall extract tolerance data in whatever form it is expressed: bilateral (±), unilateral (+/− asymmetric), limit dimensions (max/min), or a referenced general-tolerance block.</td><td><span class="pri must">MUST</span></td></tr>
+            <tr><td><span class="fid">13</span></td><td>The system shall parse GD&amp;T feature control frames — characteristic symbol, tolerance value, modifiers (MMC/LMC/RFS), and datum references — into discrete structured fields, not a single free-text string.</td><td><span class="pri must">MUST</span></td></tr>
+            <tr><td><span class="fid">14</span></td><td>The system shall capture a confidence score per extracted field and visually distinguish low-confidence extractions in the review UI.</td><td><span class="pri must">MUST</span></td></tr>
+            <tr><td><span class="fid">15</span></td><td>The system shall capture supplementary callout data where present: surface finish, material note, reference/basic dimension flags, and free-text notes tied to a balloon.</td><td><span class="pri should">SHOULD</span></td></tr>
+            <tr><td><span class="fid">16</span></td><td>Where a dimension applies a general/block tolerance rather than an explicit one, the system shall resolve and record the applicable tolerance value, with the source rule cited.</td><td><span class="pri should">SHOULD</span></td></tr>
+          </tbody>
+        </table></div>
+
+        <p><strong>Structured export</strong></p>
+        <div class="twrap"><table>
+          <thead><tr><th>ID</th><th>Requirement</th><th>Priority</th></tr></thead>
+          <tbody>
+            <tr><td><span class="fid">17</span></td><td>The system shall export reconciled data to Excel using a configurable column-mapped template (e.g., AS9102 Form 3 layout) selectable per customer or program.</td><td><span class="pri must">MUST</span></td></tr>
+            <tr><td><span class="fid">18</span></td><td>The system shall block export of any drawing package that has not reached full reconciliation and sign-off (see §10).</td><td><span class="pri must">MUST</span></td></tr>
+            <tr><td><span class="fid">19</span></td><td>Each exported row shall include its source balloon number, drawing number, revision, sheet, and zone reference — no orphaned or unattributed rows.</td><td><span class="pri must">MUST</span></td></tr>
+            <tr><td><span class="fid">20</span></td><td>The system shall support exporting a batch of drawings (a full submission package) as one workbook or one file per drawing, per user choice.</td><td><span class="pri should">SHOULD</span></td></tr>
+          </tbody>
+        </table></div>
+
+        <p><strong>Reconciliation &amp; QC</strong></p>
+        <div class="twrap"><table>
+          <thead><tr><th>ID</th><th>Requirement</th><th>Priority</th></tr></thead>
+          <tbody>
+            <tr><td><span class="fid">21</span></td><td>The system shall provide a side-by-side view of the source drawing (zoomable, pannable) and the extracted data row for every balloon during review.</td><td><span class="pri must">MUST</span></td></tr>
+            <tr><td><span class="fid">22</span></td><td>The system shall require a second, independent reviewer (not the original extractor) to confirm or correct every balloon before the drawing can be marked reconciled.</td><td><span class="pri must">MUST</span></td></tr>
+            <tr><td><span class="fid">23</span></td><td>Where the reviewer's value differs from the extracted value, the system shall log both values, the reviewer identity, and require a resolution before the balloon is considered closed.</td><td><span class="pri must">MUST</span></td></tr>
+            <tr><td><span class="fid">24</span></td><td>The system shall present a completion indicator showing count of balloons reviewed versus total, and prevent sign-off until 100% are reviewed.</td><td><span class="pri must">MUST</span></td></tr>
+            <tr><td><span class="fid">25</span></td><td>The system shall let a reviewer flag a balloon as "cannot determine from source" and route it to the drawing owner rather than force a guess.</td><td><span class="pri must">MUST</span></td></tr>
+            <tr><td><span class="fid">26</span></td><td>Sign-off shall capture the signer's identity, timestamp, and drawing revision, and lock the reconciled record against further silent edits.</td><td><span class="pri must">MUST</span></td></tr>
+          </tbody>
+        </table></div>
+
+        <p><strong>Traceability, audit &amp; reporting</strong></p>
+        <div class="twrap"><table>
+          <thead><tr><th>ID</th><th>Requirement</th><th>Priority</th></tr></thead>
+          <tbody>
+            <tr><td><span class="fid">27</span></td><td>The system shall maintain a full audit log per drawing: uploads, extraction runs, edits, reviewer actions, and sign-off, each with actor and timestamp.</td><td><span class="pri must">MUST</span></td></tr>
+            <tr><td><span class="fid">28</span></td><td>The system shall let a user search and filter drawings by number, revision, status (in progress / reconciled / signed off), and assigned reviewer.</td><td><span class="pri should">SHOULD</span></td></tr>
+            <tr><td><span class="fid">29</span></td><td>The system shall provide a batch/program-level status view showing reconciliation progress across all drawings in a submission package.</td><td><span class="pri should">SHOULD</span></td></tr>
+            <tr><td><span class="fid">30</span></td><td>The system shall allow re-export of a previously signed-off package without re-running reconciliation, reproducing the exact locked data.</td><td><span class="pri could">COULD</span></td></tr>
+          </tbody>
+        </table></div>
+      </section>
+
+      <!-- 8 -->
+      <section id="s8">
+        <div class="sec-head"><span class="balloon">8</span><h2>Non-Functional Requirements</h2></div>
+        <div class="twrap"><table>
+          <thead><tr><th>Category</th><th>Requirement</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Performance</strong></td><td>Extraction of a typical 100-balloon drawing (clean text-layer PDF) completes in under 2 minutes end-to-end. The review UI renders drawing pan/zoom interactions with no perceptible lag on files up to 50 MB / A0-size sheets.</td></tr>
+            <tr><td><strong>Scalability</strong></td><td>The system supports batch ingestion of at least 200 drawings per submission package without degrading per-drawing processing time, via queued/parallel extraction.</td></tr>
+            <tr><td><strong>Availability</strong></td><td>Core review and export functions target 99.5% uptime during business hours; a queued extraction job survives a transient service restart without data loss.</td></tr>
+            <tr><td><strong>Accuracy</strong></td><td>Balloon detection recall/precision and field-level extraction accuracy are measured against a golden test set (see §11) and published as a tracked metric — the 100% accuracy goal in §2 is achieved by the human reconciliation gate, not claimed of automated extraction alone.</td></tr>
+            <tr><td><strong>Usability</strong></td><td>A reviewer can complete confirm/correct on one balloon in a small number of interactions (target: under 10 seconds per already-correct balloon) — the review UI is the primary driver of overall cycle time.</td></tr>
+            <tr><td><strong>Accessibility</strong></td><td>The review and reporting UI meets WCAG 2.1 AA for keyboard navigation and color contrast; extracted-value flags (confidence, discrepancy) are not conveyed by color alone.</td></tr>
+            <tr><td><strong>Compliance</strong></td><td>Output structure is compatible with AS9102 Rev C (Form 3) and common PPAP ballooned-drawing formats; the system supports the retention periods those standards require for inspection records.</td></tr>
+            <tr><td><strong>Localization</strong></td><td>Supports both metric and imperial units and both ASME Y14.5 and ISO 1101 GD&amp;T symbol sets within the same install.</td></tr>
+            <tr><td><strong>Maintainability</strong></td><td>The Excel export template is configuration-driven (column mapping, form layout) rather than hard-coded, so a new customer template does not require a code release.</td></tr>
+          </tbody>
+        </table></div>
+      </section>
+
+      <!-- 9 -->
+      <section id="s9">
+        <div class="sec-head"><span class="balloon">9</span><h2>Security Requirements</h2></div>
+        <ul>
+          <li><strong>Data classification &amp; IP protection.</strong> Drawings are treated as confidential engineering IP by default; access to any drawing is scoped to users explicitly assigned to its program.</li>
+          <li><strong>Export control.</strong> The system supports marking drawings/programs as export-controlled (ITAR/EAR); such data is restricted to authorized-national users and, where required, to approved hosting regions — this bounds which OCR/AI processing services are permissible (see §14).</li>
+          <li><strong>Encryption.</strong> All drawing files and extracted data are encrypted at rest and in transit (TLS 1.2+).</li>
+          <li><strong>Authentication &amp; access control.</strong> SSO with MFA for authentication; role-based access control distinguishing Analyst, Reviewer, Manager, and Admin, enforced at the API layer, not just the UI.</li>
+          <li><strong>Segregation of duties.</strong> The system technically enforces that the reconciliation reviewer (FR-22) cannot be the same account that performed the original extraction/edit on that balloon.</li>
+          <li><strong>Audit logging.</strong> Security-relevant events (login, permission change, export, download) are logged immutably and retained per the applicable compliance retention period.</li>
+          <li><strong>Upload safety.</strong> All uploaded files are scanned for malware before processing; unsupported or malformed files are rejected with a clear reason, not silently dropped.</li>
+          <li><strong>Third-party AI/OCR services.</strong> Any third-party model or service used for extraction must contractually exclude customer drawing data from training data retention, and must be identified in a data processing addendum.</li>
+          <li><strong>Data retention &amp; deletion.</strong> Retention periods are configurable per program/customer requirement; deletion requests remove source files and derived data while preserving the audit log entry that a deletion occurred.</li>
+          <li><strong>Export watermarking (optional).</strong> Exported Excel packages may be watermarked/labeled with recipient and export timestamp for leak traceability, where the customer requires it.</li>
+        </ul>
+      </section>
+
+      <!-- 10 -->
+      <section id="s10">
+        <div class="sec-head"><span class="balloon">10</span><h2>High-Level Workflow</h2></div>
+        <p class="lede">Every drawing moves through the same gated sequence; nothing reaches export without passing the reconciliation gate.</p>
+        <div class="flow">
+          <div class="flow-step">
+            <div class="flow-num">1</div>
+            <div class="flow-body"><h4>Upload &amp; validate</h4><p>User uploads drawing(s); system confirms title-block metadata and revision, rejects sub-threshold quality files.</p></div>
+          </div>
+          <div class="flow-step">
+            <div class="flow-num">2</div>
+            <div class="flow-body"><h4>Balloon detection</h4><p>System locates and numbers every balloon on the drawing; count is recorded as the target row count.</p></div>
+          </div>
+          <div class="flow-step">
+            <div class="flow-num">3</div>
+            <div class="flow-body"><h4>Automated extraction</h4><p>For each balloon, the system drafts nominal value, tolerance, and GD&amp;T fields with a confidence score.</p></div>
+          </div>
+          <div class="flow-step">
+            <div class="flow-num">4</div>
+            <div class="flow-body"><h4>Analyst review</h4><p>Analyst works the side-by-side view, confirming or correcting every balloon — starting with low-confidence flags.</p></div>
+          </div>
+          <div class="flow-step">
+            <div class="flow-num">5</div>
+            <div class="flow-body"><h4>Independent reconciliation</h4><p>A second reviewer re-checks every balloon against the source drawing, independent of the analyst's pass.</p>
+              <span class="gate">Gate — all balloons must match</span></div>
+          </div>
+          <div class="flow-step">
+            <div class="flow-num">6</div>
+            <div class="flow-body"><h4>Discrepancy resolution</h4><p>Any mismatch between analyst and reviewer routes back to step 4, or escalates to the drawing owner if unresolved.</p></div>
+          </div>
+          <div class="flow-step">
+            <div class="flow-num">7</div>
+            <div class="flow-body"><h4>Sign-off</h4><p>Reviewer signs off; the reconciled record is locked and stamped with signer identity, timestamp, and revision.</p>
+              <span class="gate">Gate — export disabled until signed</span></div>
+          </div>
+          <div class="flow-step">
+            <div class="flow-num">8</div>
+            <div class="flow-body"><h4>Export &amp; archive</h4><p>Structured Excel is generated from the locked record; source drawing, extracted data, and audit log are archived together.</p></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 11 -->
+      <section id="s11">
+        <div class="sec-head"><span class="balloon">11</span><h2>Testing Requirements</h2></div>
+        <ul>
+          <li><strong>Golden-set accuracy testing.</strong> A curated set of drawings spanning quality tiers (clean CAD-native PDF, average scan, poor scan, hand-annotated) with verified ground truth, re-run on every extraction model/pipeline change to track balloon-detection and field-level accuracy over time.</li>
+          <li><strong>Unit testing.</strong> Parsers for dimension formats, tolerance notations, and GD&amp;T frames are unit-tested against a representative library of real-world notation variants.</li>
+          <li><strong>Integration testing.</strong> End-to-end: upload → extraction → review → reconciliation → export, verifying the exported workbook matches the locked record exactly, for each supported template.</li>
+          <li><strong>Template regression testing.</strong> Adding or editing an export template must not alter output for existing templates; run the full export suite on every template change.</li>
+          <li><strong>User acceptance testing.</strong> Quality analysts and reviewers test against real (or representative) drawings from at least two industries/programs before general availability, validating both accuracy and review-time targets from §8.</li>
+          <li><strong>Security testing.</strong> Access-control tests confirming role boundaries and segregation-of-duties enforcement (FR set in §9); periodic penetration testing on upload and export endpoints.</li>
+          <li><strong>Performance/load testing.</strong> Batch upload of 200 drawings and concurrent multi-user review sessions tested against the targets in §8.</li>
+          <li><strong>Accessibility testing.</strong> Automated and manual WCAG 2.1 AA checks on the review UI, including keyboard-only completion of a full reconciliation pass.</li>
+        </ul>
+      </section>
+
+      <!-- 12 -->
+      <section id="s12">
+        <div class="sec-head"><span class="balloon">12</span><h2>Edge Cases &amp; Error Handling</h2></div>
+        <div class="twrap"><table>
+          <thead><tr><th>Scenario</th><th>Required handling</th></tr></thead>
+          <tbody>
+            <tr><td>Illegible or very low-resolution scan</td><td>Flagged at upload (FR-03); balloons on that page route directly to manual entry rather than a low-confidence guess.</td></tr>
+            <tr><td>Balloon present on drawing but not detected by OCR</td><td>Row-count check (FR-10) surfaces the mismatch before export is allowed; user adds it manually (FR-09).</td></tr>
+            <tr><td>Duplicate balloon numbers on one sheet</td><td>Flagged for resolution (FR-08); export blocked until resolved.</td></tr>
+            <tr><td>Balloon referencing a dimension with no visible tolerance (general tolerance applies)</td><td>System resolves against the title-block general-tolerance note (FR-16) and cites the source; if no general-tolerance block exists, flags for manual input.</td></tr>
+            <tr><td>Hand-written or freehand balloon/callout</td><td>Lower automatic confidence score by design; always routed through manual confirmation, never auto-accepted.</td></tr>
+            <tr><td>Overlapping or crowded balloons (dense drawing zones)</td><td>Reviewer can zoom the source pane past the auto-detected region; manual reposition supported (FR-09).</td></tr>
+            <tr><td>Mixed unit drawing (some mm, some inch dimensions)</td><td>Per-field unit is captured explicitly (FR-11), never assumed globally from the title block alone.</td></tr>
+            <tr><td>Drawing revision changes mid-reconciliation</td><td>New revision creates a linked new version (FR-04); in-progress reconciliation on the old revision is preserved but flagged stale, not silently merged.</td></tr>
+            <tr><td>Reviewer disagrees with analyst on a value</td><td>Both values and identities logged (FR-23); balloon stays open until explicitly resolved — never auto-resolved by "last edit wins."</td></tr>
+            <tr><td>Upload interrupted mid-transfer / corrupted file</td><td>Upload is validated post-transfer (checksum); a failed validation surfaces a specific, actionable error and prompts re-upload — no partial file is queued for extraction.</td></tr>
+            <tr><td>Export attempted before sign-off</td><td>Blocked at the action level (FR-18), not just hidden in the UI — attempting via any interface returns an explicit "not reconciled" error.</td></tr>
+            <tr><td>Extraction service (OCR/AI) unavailable or times out</td><td>Job is queued and retried; user sees job status rather than a silent failure, and can still perform fully manual entry in the meantime.</td></tr>
+          </tbody>
+        </table></div>
+      </section>
+
+      <!-- 13 -->
+      <section id="s13">
+        <div class="sec-head"><span class="balloon">13</span><h2>Acceptance Criteria</h2></div>
+
+        <div class="gwt-block">
+          <div class="gwt-title">Balloon detection on upload</div>
+          <div class="gwt-body">
+            <div class="ln"><span class="k gwt">GIVEN</span><span class="v">a valid, adequately-scanned ballooned drawing is uploaded</span></div>
+            <div class="ln"><span class="k gwt">WHEN</span><span class="v">automated processing completes</span></div>
+            <div class="ln"><span class="k gwt">THEN</span><span class="v">every visually distinct balloon on the drawing has exactly one corresponding draft row, and the detected-count matches the on-image balloon count shown to the user</span></div>
+          </div>
+        </div>
+
+        <div class="gwt-block">
+          <div class="gwt-title">Low-confidence extraction is surfaced, not hidden</div>
+          <div class="gwt-body">
+            <div class="ln"><span class="k gwt">GIVEN</span><span class="v">a field's extraction confidence falls below the configured threshold</span></div>
+            <div class="ln"><span class="k gwt">WHEN</span><span class="v">the analyst opens the review UI</span></div>
+            <div class="ln"><span class="k gwt">THEN</span><span class="v">that balloon is visually flagged and sorted ahead of high-confidence balloons for review</span></div>
+          </div>
+        </div>
+
+        <div class="gwt-block">
+          <div class="gwt-title">Independent reconciliation gate</div>
+          <div class="gwt-body">
+            <div class="ln"><span class="k gwt">GIVEN</span><span class="v">an analyst has completed their pass on a drawing</span></div>
+            <div class="ln"><span class="k gwt">WHEN</span><span class="v">a second reviewer opens it for reconciliation</span></div>
+            <div class="ln"><span class="k gwt">THEN</span><span class="v">the system requires that reviewer's account to differ from the analyst's account, and will not allow sign-off from the same identity</span></div>
+          </div>
+        </div>
+
+        <div class="gwt-block">
+          <div class="gwt-title">Discrepancy logging</div>
+          <div class="gwt-body">
+            <div class="ln"><span class="k gwt">GIVEN</span><span class="v">a reviewer enters a value that differs from the analyst's extracted or confirmed value for a balloon</span></div>
+            <div class="ln"><span class="k gwt">WHEN</span><span class="v">the reviewer saves that balloon</span></div>
+            <div class="ln"><span class="k gwt">THEN</span><span class="v">both values and both user identities are recorded, and the balloon is marked "unresolved" until an explicit resolution action is taken</span></div>
+          </div>
+        </div>
+
+        <div class="gwt-block">
+          <div class="gwt-title">Export blocked until fully reconciled</div>
+          <div class="gwt-body">
+            <div class="ln"><span class="k gwt">GIVEN</span><span class="v">one or more balloons on a drawing are not yet marked reconciled</span></div>
+            <div class="ln"><span class="k gwt">WHEN</span><span class="v">any user attempts to export that drawing</span></div>
+            <div class="ln"><span class="k gwt">THEN</span><span class="v">the export is refused with a message identifying which balloons remain open</span></div>
+          </div>
+        </div>
+
+        <div class="gwt-block">
+          <div class="gwt-title">Export fidelity</div>
+          <div class="gwt-body">
+            <div class="ln"><span class="k gwt">GIVEN</span><span class="v">a drawing has been fully reconciled and signed off</span></div>
+            <div class="ln"><span class="k gwt">WHEN</span><span class="v">the user exports it to Excel</span></div>
+            <div class="ln"><span class="k gwt">THEN</span><span class="v">every row in the workbook matches the locked reconciled record exactly — value, tolerance, GD&amp;T fields, and balloon/drawing/revision/zone reference — with no row added, dropped, or altered by the export step</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 14 -->
+      <section id="s14">
+        <div class="sec-head"><span class="balloon">14</span><h2>Open Questions</h2></div>
+        <p class="lede">These materially affect scope and architecture and should be resolved before implementation planning.</p>
+        <div class="callout warn">
+          <span class="lbl">Needs answer</span>
+          <p><strong>1. Input drawings — pre-ballooned only, or does the system also need to balloon un-marked drawings?</strong> The raw brief says "drawings containing ballooned dimensions," which this document treats as pre-ballooned input (§4). If un-ballooned drawings are in scope, an auto-ballooning capability is a significant additional workstream.</p>
+          <p><strong>2. Source format — is native CAD (SolidWorks, NX, CATIA, DXF) required, or is PDF/raster sufficient?</strong> This document scopes v1 to PDF/raster only.</p>
+          <p><strong>3. Which Excel template(s) must be supported at launch?</strong> AS9102 Form 3 and a generic PPAP-style characteristic matrix are assumed as candidates — please confirm the actual target template(s) and whether per-customer variants are needed.</p>
+          <p><strong>4. Deployment model:</strong> cloud/SaaS, customer on-premise, or both? This is the primary driver for the export-control and hosting-region requirements in §9.</p>
+          <p><strong>5. Is any third-party OCR/AI extraction service pre-approved, or does the vendor need to be selected/vetted as part of this project?</strong> This directly affects the export-control constraint in §6/§9.</p>
+          <p><strong>6. Expected volume:</strong> drawings per day/week and typical balloon count per drawing, to size performance targets in §8 correctly.</p>
+          <p><strong>7. Is integration with an existing PLM/QMS/ERP system (e.g., pulling drawing metadata, writing back inspection status) required for v1, or is the tool standalone?</strong></p>
+          <p><strong>8. Who performs the "independent reviewer" role in practice</strong> — a second internal analyst, a dedicated QC function, or in some cases an outsourced/BPO team? This affects the access-control model in §9.</p>
+          <p><strong>9. Should the tool support GD&amp;T standards beyond ASME Y14.5 and ISO 1101 (e.g., older or industry-specific variants)?</strong></p>
+          <p><strong>10. What is the acceptable automated extraction accuracy floor before a drawing is routed entirely to manual entry rather than assisted review?</strong> A numeric target is needed to tune the confidence-threshold behavior in FR-14 and §8.</p>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <footer class="doc-foot">
+    Ballooned Drawing Dimension &amp; Tolerance Data Extraction — Requirements Baseline, Rev A (Draft). Prepared for internal review; not yet approved for implementation.
+  </footer>
+
+</div>
+</body>
+</html>

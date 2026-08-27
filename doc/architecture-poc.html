@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ballooned Drawing POC Architecture</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+</head>
+<body>
+<style>
+  :root{
+    --bg:#F5F3EE; --surface:#FFFFFF; --surface-2:#ECE8DE;
+    --ink:#1C2431; --ink-soft:#5B6472; --ink-faint:#8A8F98; --line:#DBD6C9;
+    --accent:#C1571F; --accent-ink:#7A3512; --accent-soft:#F0DCC8;
+    --good:#3E7D5A; --good-soft:#DEEBE2; --out:#9B4A3D; --out-soft:#F1DED9;
+    --warn:#96700A; --warn-soft:#F3E7C9; --mono-bg:#ECE7D8; --code-ink:#3D3120;
+    --shadow: 0 1px 2px rgba(28,36,49,.06), 0 8px 24px -12px rgba(28,36,49,.18);
+    --poc:#5B6EC9; --poc-soft:#E3E6F7;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#12161D; --surface:#191E27; --surface-2:#1F2530;
+      --ink:#E8E5DB; --ink-soft:#9CA4B0; --ink-faint:#6C7480; --line:#2B3240;
+      --accent:#E58A4C; --accent-ink:#F4C69B; --accent-soft:#3A2A1C;
+      --good:#74C097; --good-soft:#1D2E25; --out:#D68A7C; --out-soft:#332120;
+      --warn:#E3BE5B; --warn-soft:#332C16; --mono-bg:#1B2029; --code-ink:#D9CFB8;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 12px 28px -14px rgba(0,0,0,.6);
+      --poc:#8C9BE6; --poc-soft:#242B47;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#12161D; --surface:#191E27; --surface-2:#1F2530;
+    --ink:#E8E5DB; --ink-soft:#9CA4B0; --ink-faint:#6C7480; --line:#2B3240;
+    --accent:#E58A4C; --accent-ink:#F4C69B; --accent-soft:#3A2A1C;
+    --good:#74C097; --good-soft:#1D2E25; --out:#D68A7C; --out-soft:#332120;
+    --warn:#E3BE5B; --warn-soft:#332C16; --mono-bg:#1B2029; --code-ink:#D9CFB8;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 12px 28px -14px rgba(0,0,0,.6);
+    --poc:#8C9BE6; --poc-soft:#242B47;
+  }
+
+  *{box-sizing:border-box;}
+  body{margin:0;}
+  .doc{background:var(--bg); color:var(--ink); font-family:"Public Sans", ui-sans-serif, system-ui, sans-serif; line-height:1.6; min-height:100%;}
+  h1,h2,h3,h4{font-family:"Big Shoulders Display","Arial Narrow",sans-serif; font-weight:700; text-transform:uppercase; letter-spacing:.02em; text-wrap:balance; color:var(--ink); margin:0;}
+  code,.mono{font-family:"IBM Plex Mono", ui-monospace,"SF Mono",monospace;}
+  a{color:var(--accent-ink);}
+
+  .titleblock{border-bottom:2px solid var(--ink); background:var(--surface-2); padding:2.25rem clamp(1.25rem,4vw,3rem) 1.5rem;}
+  .titleblock .eyebrow{display:flex; align-items:center; gap:.6rem; font-family:"IBM Plex Mono",monospace; font-size:.72rem; letter-spacing:.14em; text-transform:uppercase; color:var(--accent-ink); margin:0 0 .6rem;}
+  .stage-badge{display:inline-flex; align-items:center; gap:.4rem; padding:.2rem .6rem; border-radius:999px; background:var(--poc-soft); color:var(--poc); border:1px solid var(--poc); font-size:.68rem; letter-spacing:.1em;}
+  .titleblock h1{font-size:clamp(2rem,4.2vw,2.9rem); line-height:1.02; max-width:20ch;}
+  .titleblock .sub{margin:.85rem 0 0; max-width:68ch; color:var(--ink-soft); font-size:1.02rem;}
+  .tb-grid{margin-top:1.5rem; display:grid; grid-template-columns:repeat(4,minmax(120px,1fr)); border:1px solid var(--line); background:var(--surface); box-shadow:var(--shadow);}
+  .tb-cell{padding:.6rem .85rem; border-right:1px solid var(--line);}
+  .tb-cell:last-child{border-right:none;}
+  .tb-cell .k{font-size:.66rem; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-faint); display:block; margin-bottom:.2rem;}
+  .tb-cell .v{font-family:"IBM Plex Mono",monospace; font-size:.86rem;}
+
+  .scope-strip{margin-top:1.25rem; display:flex; flex-wrap:wrap; gap:.5rem;}
+  .scope-strip .tag{font-family:"IBM Plex Mono",monospace; font-size:.72rem; padding:.25rem .65rem; border-radius:4px; background:var(--out-soft); color:var(--out); border:1px solid color-mix(in srgb, var(--out) 35%, var(--line));}
+
+  .layout{display:grid; grid-template-columns:230px minmax(0,1fr); gap:0; max-width:1180px; margin:0 auto;}
+  nav.toc{padding:2rem 1.25rem 3rem; position:sticky; top:0; align-self:start; max-height:100vh; overflow-y:auto; border-right:1px solid var(--line);}
+  nav.toc .toc-title{font-size:.68rem; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-faint); margin:0 0 .9rem;}
+  nav.toc ol{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:.15rem;}
+  nav.toc a{display:flex; align-items:center; gap:.6rem; text-decoration:none; color:var(--ink-soft); font-size:.86rem; padding:.32rem .4rem; border-radius:4px;}
+  nav.toc a:hover{color:var(--ink); background:var(--surface-2);}
+  nav.toc .b{flex:none; width:1.55rem; height:1.55rem; border-radius:50%; border:1.5px solid var(--ink-faint); display:flex; align-items:center; justify-content:center; font-family:"IBM Plex Mono",monospace; font-size:.68rem; color:var(--ink-faint);}
+
+  main{padding:2.5rem clamp(1.25rem,4vw,3.5rem) 6rem; min-width:0;}
+  section{padding-top:2.75rem; margin-top:2.75rem; border-top:1px solid var(--line); scroll-margin-top:1.5rem;}
+  section:first-of-type{border-top:none; margin-top:1rem; padding-top:0;}
+  .sec-head{display:flex; align-items:baseline; gap:.9rem; margin-bottom:1.1rem;}
+  .balloon{flex:none; width:2.5rem; height:2.5rem; border-radius:50%; border:2px solid var(--accent); color:var(--accent-ink); display:flex; align-items:center; justify-content:center; font-family:"IBM Plex Mono",monospace; font-weight:600; font-size:1.02rem; background:var(--accent-soft);}
+  .sec-head h2{font-size:clamp(1.25rem,2.3vw,1.6rem);}
+  .sub-head{font-size:1rem; margin:1.6rem 0 .5rem; letter-spacing:.01em;}
+
+  p{margin:.75rem 0; max-width:74ch;}
+  .lede{color:var(--ink-soft); font-size:1.02rem; max-width:70ch;}
+  ul{margin:.75rem 0; padding-left:1.3rem; max-width:72ch;}
+  li{margin:.4rem 0;}
+  strong{color:var(--ink); font-weight:600;}
+
+  .twrap{overflow-x:auto; margin-top:1.1rem; border:1px solid var(--line); border-radius:6px; background:var(--surface); box-shadow:var(--shadow);}
+  table{border-collapse:collapse; width:100%; min-width:520px; font-size:.88rem;}
+  thead th{text-align:left; font-family:"IBM Plex Mono",monospace; font-size:.66rem; letter-spacing:.07em; text-transform:uppercase; color:var(--ink-faint); padding:.6rem .85rem; background:var(--surface-2); border-bottom:1px solid var(--line); white-space:nowrap;}
+  tbody td{padding:.6rem .85rem; border-bottom:1px solid var(--line); vertical-align:top;}
+  tbody tr:last-child td{border-bottom:none;}
+  tbody tr:hover{background:var(--surface-2);}
+
+  .diagram-card{margin-top:1.25rem; border:1px solid var(--line); border-radius:6px; background:var(--surface); box-shadow:var(--shadow); overflow:hidden;}
+  .diagram-card .dc-title{padding:.6rem 1rem; background:var(--surface-2); border-bottom:1px solid var(--line); font-family:"IBM Plex Mono",monospace; font-size:.72rem; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-faint);}
+  .diagram-card .dc-body{padding:1rem; overflow-x:auto;}
+  pre.mermaid{margin:0; font-family:"IBM Plex Mono",monospace; font-size:.8rem; color:var(--ink-soft); white-space:pre;}
+
+  pre.code{margin:1.1rem 0 0; background:var(--mono-bg); color:var(--code-ink); border:1px solid var(--line); border-radius:6px; padding:1rem 1.15rem; overflow-x:auto; font-family:"IBM Plex Mono",monospace; font-size:.82rem; line-height:1.55;}
+  .code-label{display:block; font-family:"IBM Plex Mono",monospace; font-size:.68rem; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-faint); margin:1.1rem 0 -.4rem;}
+
+  .callout{margin-top:1.25rem; border-left:3px solid var(--accent); background:var(--accent-soft); padding:.9rem 1.15rem; border-radius:0 6px 6px 0;}
+  .callout.warn{border-color:var(--warn); background:var(--warn-soft);}
+  .callout p{margin:.3rem 0; font-size:.92rem;}
+  .callout .lbl{font-family:"IBM Plex Mono",monospace; font-size:.68rem; letter-spacing:.1em; text-transform:uppercase; color:var(--accent-ink); display:block; margin-bottom:.3rem;}
+  .callout.warn .lbl{color:var(--warn);}
+
+  .flow{margin-top:1.25rem; display:flex; flex-direction:column; gap:0;}
+  .flow-step{display:grid; grid-template-columns:2.2rem 1fr; gap:1rem; position:relative; padding-bottom:1.2rem;}
+  .flow-step:last-child{padding-bottom:0;}
+  .flow-step::before{content:""; position:absolute; left:1.09rem; top:2.2rem; bottom:0; width:1.5px; background:var(--line);}
+  .flow-step:last-child::before{display:none;}
+  .flow-num{width:2.2rem; height:2.2rem; border-radius:50%; background:var(--surface); border:1.5px solid var(--ink-soft); display:flex; align-items:center; justify-content:center; font-family:"IBM Plex Mono",monospace; font-size:.78rem; font-weight:600; color:var(--ink-soft); flex:none; z-index:1;}
+  .flow-body h4{font-family:"Public Sans"; text-transform:none; font-size:.94rem; font-weight:600; margin:0 0 .2rem; letter-spacing:0;}
+  .flow-body p{margin:0; font-size:.86rem; color:var(--ink-soft); max-width:64ch;}
+
+  .pri{font-family:"IBM Plex Mono",monospace; font-size:.72rem; padding:.1rem .5rem; border-radius:4px;}
+
+  footer.doc-foot{padding:2.5rem clamp(1.25rem,4vw,3.5rem) 3rem; color:var(--ink-faint); font-size:.78rem; border-top:1px solid var(--line);}
+
+  @media (max-width: 880px){
+    .layout{grid-template-columns:1fr;}
+    nav.toc{position:relative; max-height:none; border-right:none; border-bottom:1px solid var(--line);}
+    .tb-grid{grid-template-columns:repeat(2,1fr);}
+  }
+</style>
+
+<div class="doc">
+  <div class="titleblock">
+    <p class="eyebrow"><span class="stage-badge">● Proof of Concept</span> Software Architecture &amp; Design Specification</p>
+    <h1>Ballooned Drawing Extraction — POC Architecture</h1>
+    <p class="sub">Validates the single riskiest technical assumption — that Azure Document Intelligence + Azure OpenAI can reliably read balloon numbers, dimensions, tolerances, and GD&amp;T off real drawings — before building the full gated workflow.</p>
+    <div class="tb-grid">
+      <div class="tb-cell"><span class="k">Doc No.</span><span class="v">BDX-ARCH-POC-001</span></div>
+      <div class="tb-cell"><span class="k">Rev</span><span class="v">A — Draft</span></div>
+      <div class="tb-cell"><span class="k">Date</span><span class="v">2026-08-26</span></div>
+      <div class="tb-cell"><span class="k">Companion</span><span class="v">architecture-full.html</span></div>
+    </div>
+    <div class="scope-strip">
+      <span class="tag">No auth</span>
+      <span class="tag">No reconciliation gate</span>
+      <span class="tag">Single user</span>
+      <span class="tag">Disposable infra</span>
+      <span class="tag">30-day retention</span>
+    </div>
+  </div>
+
+  <div class="layout">
+    <nav class="toc" aria-label="Table of contents">
+      <p class="toc-title">Contents</p>
+      <ol>
+        <li><a href="#h1"><span class="b">1</span>High-Level Design</a></li>
+        <li><a href="#h2"><span class="b">2</span>Low-Level Design</a></li>
+        <li><a href="#h3"><span class="b">3</span>API Specification</a></li>
+        <li><a href="#h4"><span class="b">4</span>Data Specification</a></li>
+        <li><a href="#h5"><span class="b">5</span>Not Answered by This POC</a></li>
+      </ol>
+    </nav>
+
+    <main>
+      <section id="h1">
+        <div class="sec-head"><span class="balloon">1</span><h2>High-Level Design</h2></div>
+
+        <h3 class="sub-head">1.1 System Architecture Overview</h3>
+        <p><strong>Pattern: single-purpose pipeline behind one Azure Function App</strong> — not microservices, not even a full modular monolith. The POC's only job is to answer "can the AI pipeline extract this correctly?" Every other requirement (auth, review UI, reconciliation) is deliberately out of scope. One Function App hosts HTTP-triggered functions executing a linear pipeline: <span class="mono">validate → convert → detect balloons → extract fields → write Excel → return result.</span> No orchestration engine, no message queue, no persistent application database.</p>
+
+        <h3 class="sub-head">1.2 Component Diagram</h3>
+        <div class="diagram-card">
+          <div class="dc-title">mermaid · flowchart</div>
+          <div class="dc-body">
+<pre class="mermaid">
+flowchart LR
+    U[Engineer&lt;br/&gt;Postman / simple upload page] -->|POST multipart file| FN[Azure Function App&lt;br/&gt;HTTP Trigger: extract]
+
+    subgraph AZ[Azure Resource Group: bdx-poc-rg]
+        FN --> BLOB1[(Blob Storage&lt;br/&gt;container: raw-drawings)]
+        FN --> PRE[PDF→Image Preprocessor&lt;br/&gt;in-process, PyMuPDF/pdfium]
+        PRE --> DI[Azure AI Document Intelligence&lt;br/&gt;prebuilt-layout model]
+        DI --> FN
+        FN --> AOAI[Azure OpenAI&lt;br/&gt;GPT-4o, structured outputs]
+        AOAI --> FN
+        FN --> XL[Excel Writer&lt;br/&gt;in-process, openpyxl]
+        XL --> BLOB2[(Blob Storage&lt;br/&gt;container: exports)]
+        FN --> TBL[(Azure Table Storage&lt;br/&gt;table: jobs)]
+    end
+
+    FN -->|JSON result + export SAS URL| U
+</pre>
+          </div>
+        </div>
+        <p>External dependencies: Azure AI Document Intelligence, Azure OpenAI, Azure Blob Storage, Azure Table Storage. No load balancer, no API gateway, no CDN — a Consumption or Premium Function App is sufficient at POC traffic levels.</p>
+
+        <h3 class="sub-head">1.3 Data Flow — "Extract one drawing"</h3>
+        <div class="flow">
+          <div class="flow-step"><div class="flow-num">1</div><div class="flow-body"><h4>Upload</h4><p>User <span class="mono">POST</span>s a PDF/image to <span class="mono">/api/drawings/extract</span> with the function key.</p></div></div>
+          <div class="flow-step"><div class="flow-num">2</div><div class="flow-body"><h4>Validate</h4><p>Function checks file type and page count/DPI; rejects with <span class="mono">400</span> below threshold (mirrors FR-03).</p></div></div>
+          <div class="flow-step"><div class="flow-num">3</div><div class="flow-body"><h4>Store &amp; log</h4><p>File written to <span class="mono">raw-drawings/{jobId}/source.pdf</span>; job row created in Table Storage, <span class="mono">status=Processing</span>.</p></div></div>
+          <div class="flow-step"><div class="flow-num">4</div><div class="flow-body"><h4>Rasterize</h4><p>Each page converted to a high-resolution PNG in-process.</p></div></div>
+          <div class="flow-step"><div class="flow-num">5</div><div class="flow-body"><h4>Layout extraction</h4><p>Each page sent to Document Intelligence (<span class="mono">prebuilt-layout</span>) — returns text lines, tables, and bounding boxes, giving every candidate balloon/dimension a page coordinate.</p></div></div>
+          <div class="flow-step"><div class="flow-num">6</div><div class="flow-body"><h4>Structured extraction</h4><p>DI output + page image sent to Azure OpenAI (GPT-4o, vision) with a JSON-schema tool call: identify every balloon and return nominal value, tolerance, GD&amp;T, and confidence.</p></div></div>
+          <div class="flow-step"><div class="flow-num">7</div><div class="flow-body"><h4>Reconcile counts</h4><p>AI's balloon list is checked against DI's raw circle/ellipse shape count; mismatch is surfaced in the response, not blocked — this is the exact signal the POC exists to measure.</p></div></div>
+          <div class="flow-step"><div class="flow-num">8</div><div class="flow-body"><h4>Write outputs</h4><p>Result JSON written to <span class="mono">extracted-json/</span>; Excel workbook generated from the same JSON via the configured template into <span class="mono">exports/</span>.</p></div></div>
+          <div class="flow-step"><div class="flow-num">9</div><div class="flow-body"><h4>Return</h4><p>JSON result plus a short-lived SAS URL to the Excel file returned inline; job row updated to <span class="mono">status=Complete</span>.</p></div></div>
+        </div>
+
+        <h3 class="sub-head">1.4 Architectural Trade-offs</h3>
+        <div class="twrap"><table>
+          <thead><tr><th>#</th><th>Decision</th><th>Chosen because</th><th>Sacrificed</th></tr></thead>
+          <tbody>
+            <tr><td>1</td><td><strong>Single Function App, no microservices</strong></td><td>Fastest path to a testable pipeline; one deployable, trivial to iterate on prompts.</td><td>Service isolation and the module boundaries the Full architecture needs — this code is expected to be rewritten, not grown.</td></tr>
+            <tr><td>2</td><td><strong>Blob + Table Storage, no database</strong></td><td>Zero schema migrations, zero ops, matches single-user/single-job usage.</td><td>Queryability, relational integrity, reconciliation workflow state.</td></tr>
+            <tr><td>3</td><td><strong>No reconciliation gate, no auth</strong></td><td>Isolates the variable under test — extraction accuracy — from workflow/security concerns.</td><td>The requirements doc's core guarantee (100% reconciliation before export) does <strong>not</strong> hold here — output must be labeled unverified.</td></tr>
+            <tr><td>4</td><td><strong>Synchronous request/response, no queue</strong></td><td>Simplest to test with Postman; one drawing at a time, one user.</td><td>Resilience and throughput — does not survive to batch volumes (200 drawings/package in the Full NFRs).</td></tr>
+          </tbody>
+        </table></div>
+      </section>
+
+      <section id="h2">
+        <div class="sec-head"><span class="balloon">2</span><h2>Low-Level Design</h2></div>
+
+        <h3 class="sub-head">2.1 Core Modules &amp; Classes</h3>
+        <div class="twrap"><table>
+          <thead><tr><th>Module</th><th>Responsibility</th></tr></thead>
+          <tbody>
+            <tr><td><span class="mono">UploadHandler</span></td><td>HTTP trigger entry point; validates content-type/size, generates <span class="mono">jobId</span>, writes source blob, creates job record.</td></tr>
+            <tr><td><span class="mono">DrawingPreprocessor</span></td><td>Converts PDF pages to raster images at a controlled DPI; rejects pages below the quality floor.</td></tr>
+            <tr><td><span class="mono">BalloonDetector</span></td><td>Calls Document Intelligence layout, isolates enclosed/circled numeric tokens as balloon candidates.</td></tr>
+            <tr><td><span class="mono">ExtractionOrchestrator</span></td><td>Builds the Azure OpenAI request (image + DI text layer + JSON schema), invokes the model, validates the response.</td></tr>
+            <tr><td><span class="mono">ToleranceNormalizer</span></td><td>Post-processes raw tolerance strings into a normalized shape regardless of source notation.</td></tr>
+            <tr><td><span class="mono">ExcelWriter</span></td><td>Maps normalized field objects onto the configured template's column layout.</td></tr>
+            <tr><td><span class="mono">JobStore</span></td><td>Thin wrapper over Table Storage for job status read/write.</td></tr>
+          </tbody>
+        </table></div>
+
+        <h3 class="sub-head">2.2 Design Patterns</h3>
+        <ul>
+          <li><strong>Pipeline pattern</strong> — the five processing stages are composed as an ordered list with a uniform <span class="mono">execute(context)</span> signature, so stages can be reordered/swapped without touching the HTTP trigger.</li>
+          <li><strong>Strategy pattern</strong> — <span class="mono">ExtractionOrchestrator</span> takes an <span class="mono">IExtractionStrategy</span>; the POC ships one (vision-grounded), but the interface exists so alternatives can be A/B tested.</li>
+          <li><strong>Retry with exponential backoff</strong> — wraps Document Intelligence and Azure OpenAI SDK calls for <span class="mono">429</span>/<span class="mono">503</span>; 3 attempts, base 2s, jittered.</li>
+          <li><strong>Adapter pattern</strong> — Azure SDK clients wrapped behind small interfaces purely so unit tests can substitute fakes.</li>
+        </ul>
+
+        <h3 class="sub-head">2.3 Error Handling &amp; Edge Cases</h3>
+        <div class="twrap"><table>
+          <thead><tr><th>Condition</th><th>Handling</th></tr></thead>
+          <tbody>
+            <tr><td>Unsupported file type / corrupt file</td><td><span class="mono">400</span> with a specific reason; no job created.</td></tr>
+            <tr><td>Page below DPI/quality threshold</td><td><span class="mono">422</span>; identifies which page(s) failed and why.</td></tr>
+            <tr><td>Document Intelligence timeout/5xx after retries</td><td>Job marked <span class="mono">ExtractionFailed</span>; Function returns <span class="mono">502</span>.</td></tr>
+            <tr><td>Azure OpenAI returns malformed JSON</td><td>One repair re-prompt; on second failure, balloon emitted with <span class="mono">confidence=0</span> — never dropped.</td></tr>
+            <tr><td>Content filter trips on a drawing image</td><td>Balloon flagged <span class="mono">blocked=true</span>; rest of the page still processed.</td></tr>
+            <tr><td>Balloon count mismatch (shapes vs. AI)</td><td>Not an error — surfaced as <span class="mono">balloonCountMismatch</span> in the response; this is exactly what the POC measures.</td></tr>
+            <tr><td>Execution time approaching plan limit</td><td>Page count capped per request (default 10); <span class="mono">413</span> above that rather than a timeout.</td></tr>
+          </tbody>
+        </table></div>
+      </section>
+
+      <section id="h3">
+        <div class="sec-head"><span class="balloon">3</span><h2>API Specification</h2></div>
+
+        <h3 class="sub-head">3.1 Interface Protocol</h3>
+        <p><strong>REST/HTTP over Azure Functions HTTP triggers.</strong> No GraphQL, gRPC, or WebSockets — a POC with one caller (a tester and Postman/a minimal upload page) has no client-diversity or subscription requirement that would justify anything beyond plain synchronous REST.</p>
+
+        <h3 class="sub-head">3.2 Endpoints</h3>
+        <p><strong><span class="mono">POST /api/drawings/extract</span></strong> — uploads and processes one drawing synchronously.</p>
+        <p><strong>Auth:</strong> <span class="mono">x-functions-key</span> header (Function-level key) — not a production auth mechanism.</p>
+        <span class="code-label">Response 200 OK</span>
+        <pre class="code">{
+  "jobId": "b3f1c9e2-...",
+  "drawingNumber": "DWG-10245",
+  "revision": "C",
+  "balloonCountDetected": 47,
+  "balloonCountExtracted": 45,
+  "balloonCountMismatch": true,
+  "balloons": [
+    {
+      "balloonNumber": 12,
+      "page": 1,
+      "nominalValue": 25.4,
+      "unit": "mm",
+      "toleranceType": "bilateral",
+      "upperTol": 0.05,
+      "lowerTol": -0.05,
+      "gdt": null,
+      "confidence": 0.94
+    },
+    {
+      "balloonNumber": 13,
+      "page": 1,
+      "nominalValue": null,
+      "gdt": { "symbol": "position", "value": 0.1, "modifiers": ["MMC"], "datums": ["A","B","C"] },
+      "confidence": 0.81
+    }
+  ],
+  "exportUrl": "https://bdxpocsa.blob.core.windows.net/exports/b3f1.../characteristics.xlsx?sv=...(SAS, 1hr)"
+}</pre>
+        <p><strong>Status codes:</strong> <span class="mono">200</span> success · <span class="mono">400</span> bad file · <span class="mono">422</span> quality threshold not met · <span class="mono">413</span> too many pages · <span class="mono">502</span> upstream Azure AI failure after retries.</p>
+
+        <p style="margin-top:1.5rem"><strong><span class="mono">GET /api/drawings/{jobId}</span></strong> — re-fetches a previously computed result (Table Storage lookup; no re-processing). Same response shape; <span class="mono">404</span> if unknown or expired (§4.3 retention).</p>
+
+        <h3 class="sub-head">3.3 Authentication &amp; Authorization</h3>
+        <p>None beyond the Azure Functions key. There is exactly one implicit role (tester/operator). Explicitly flagged as a gap to close before any non-throwaway use — see the Full architecture's Entra ID model.</p>
+      </section>
+
+      <section id="h4">
+        <div class="sec-head"><span class="balloon">4</span><h2>Data Specification</h2></div>
+
+        <h3 class="sub-head">4.1 Storage Overview</h3>
+        <p>No relational database in the POC.</p>
+        <div class="twrap"><table>
+          <thead><tr><th>Store</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td>Blob container <span class="mono">raw-drawings</span></td><td>Original uploaded files, keyed by <span class="mono">{jobId}/source.pdf</span>.</td></tr>
+            <tr><td>Blob container <span class="mono">exports</span></td><td>Generated <span class="mono">.xlsx</span> files, keyed by <span class="mono">{jobId}/characteristics.xlsx</span>.</td></tr>
+            <tr><td>Azure Table Storage <span class="mono">jobs</span></td><td>One row per job: filename, status, drawing number/revision, balloon counts, avg confidence, timestamps, error reason.</td></tr>
+          </tbody>
+        </table></div>
+
+        <h3 class="sub-head">4.2 Why Blob + Table instead of a database</h3>
+        <p>A relational store buys queryability and integrity the POC doesn't need yet — no reconciliation state machine, no cross-drawing reporting, no concurrent writers. Table Storage gives a queryable job log at effectively zero operational cost; Blob Storage is the natural fit for the actual payloads, which don't belong in a database row regardless of architecture stage.</p>
+
+        <h3 class="sub-head">4.3 Caching &amp; Lifecycle</h3>
+        <div class="callout">
+          <span class="lbl">Policy</span>
+          <p><strong>Caching:</strong> none. Every call to Document Intelligence/Azure OpenAI is live — caching results would risk masking the non-determinism the POC is measuring.</p>
+          <p><strong>Retention:</strong> Blob lifecycle policy deletes everything in <span class="mono">raw-drawings</span> and <span class="mono">exports</span> 30 days after last-modified — a safety default for throwaway infrastructure processing potentially proprietary drawings.</p>
+          <p><strong>Teardown:</strong> the entire resource group is expected to be deleted once the extraction-accuracy question is answered.</p>
+        </div>
+      </section>
+
+      <section id="h5">
+        <div class="sec-head"><span class="balloon">5</span><h2>What This POC Does Not Answer</h2></div>
+        <div class="callout warn">
+          <span class="lbl">Not validated by a successful spike</span>
+          <p>Multi-user concurrency, the reconciliation/sign-off workflow, authentication/authorization, batch throughput at production volume, cost-at-scale, export-control/data-residency handling, and Excel template configurability beyond one hard-coded layout. All addressed in the <a href="architecture-full.html">Full production architecture</a>.</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="doc-foot">Ballooned Drawing Extraction — POC Architecture, Rev A (Draft). Companion to architecture-full.html.</footer>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+  try {
+    if (window.mermaid) {
+      mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'neutral' });
+    }
+  } catch (e) {}
+</script>
+
+</body>
+</html>

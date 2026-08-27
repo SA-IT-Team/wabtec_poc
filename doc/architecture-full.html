@@ -1,0 +1,505 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ballooned Drawing Production Architecture</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+</head>
+<body>
+<style>
+  :root{
+    --bg:#F5F3EE; --surface:#FFFFFF; --surface-2:#ECE8DE;
+    --ink:#1C2431; --ink-soft:#5B6472; --ink-faint:#8A8F98; --line:#DBD6C9;
+    --accent:#C1571F; --accent-ink:#7A3512; --accent-soft:#F0DCC8;
+    --good:#3E7D5A; --good-soft:#DEEBE2; --out:#9B4A3D; --out-soft:#F1DED9;
+    --warn:#96700A; --warn-soft:#F3E7C9; --mono-bg:#ECE7D8; --code-ink:#3D3120;
+    --shadow: 0 1px 2px rgba(28,36,49,.06), 0 8px 24px -12px rgba(28,36,49,.18);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#12161D; --surface:#191E27; --surface-2:#1F2530;
+      --ink:#E8E5DB; --ink-soft:#9CA4B0; --ink-faint:#6C7480; --line:#2B3240;
+      --accent:#E58A4C; --accent-ink:#F4C69B; --accent-soft:#3A2A1C;
+      --good:#74C097; --good-soft:#1D2E25; --out:#D68A7C; --out-soft:#332120;
+      --warn:#E3BE5B; --warn-soft:#332C16; --mono-bg:#1B2029; --code-ink:#D9CFB8;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 12px 28px -14px rgba(0,0,0,.6);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#12161D; --surface:#191E27; --surface-2:#1F2530;
+    --ink:#E8E5DB; --ink-soft:#9CA4B0; --ink-faint:#6C7480; --line:#2B3240;
+    --accent:#E58A4C; --accent-ink:#F4C69B; --accent-soft:#3A2A1C;
+    --good:#74C097; --good-soft:#1D2E25; --out:#D68A7C; --out-soft:#332120;
+    --warn:#E3BE5B; --warn-soft:#332C16; --mono-bg:#1B2029; --code-ink:#D9CFB8;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 12px 28px -14px rgba(0,0,0,.6);
+  }
+
+  *{box-sizing:border-box;}
+  body{margin:0;}
+  .doc{background:var(--bg); color:var(--ink); font-family:"Public Sans", ui-sans-serif, system-ui, sans-serif; line-height:1.6; min-height:100%;}
+  h1,h2,h3,h4{font-family:"Big Shoulders Display","Arial Narrow",sans-serif; font-weight:700; text-transform:uppercase; letter-spacing:.02em; text-wrap:balance; color:var(--ink); margin:0;}
+  code,.mono{font-family:"IBM Plex Mono", ui-monospace,"SF Mono",monospace;}
+  a{color:var(--accent-ink);}
+
+  .titleblock{border-bottom:2px solid var(--ink); background:var(--surface-2); padding:2.25rem clamp(1.25rem,4vw,3rem) 1.5rem;}
+  .titleblock .eyebrow{display:flex; align-items:center; gap:.6rem; font-family:"IBM Plex Mono",monospace; font-size:.72rem; letter-spacing:.14em; text-transform:uppercase; color:var(--accent-ink); margin:0 0 .6rem;}
+  .stage-badge{display:inline-flex; align-items:center; gap:.4rem; padding:.2rem .6rem; border-radius:999px; background:var(--good-soft); color:var(--good); border:1px solid var(--good); font-size:.68rem; letter-spacing:.1em;}
+  .titleblock h1{font-size:clamp(2rem,4.2vw,2.9rem); line-height:1.02; max-width:22ch;}
+  .titleblock .sub{margin:.85rem 0 0; max-width:70ch; color:var(--ink-soft); font-size:1.02rem;}
+  .tb-grid{margin-top:1.5rem; display:grid; grid-template-columns:repeat(4,minmax(120px,1fr)); border:1px solid var(--line); background:var(--surface); box-shadow:var(--shadow);}
+  .tb-cell{padding:.6rem .85rem; border-right:1px solid var(--line);}
+  .tb-cell:last-child{border-right:none;}
+  .tb-cell .k{font-size:.66rem; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-faint); display:block; margin-bottom:.2rem;}
+  .tb-cell .v{font-family:"IBM Plex Mono",monospace; font-size:.86rem;}
+
+  .scope-strip{margin-top:1.25rem; display:flex; flex-wrap:wrap; gap:.5rem;}
+  .scope-strip .tag{font-family:"IBM Plex Mono",monospace; font-size:.72rem; padding:.25rem .65rem; border-radius:4px; background:var(--good-soft); color:var(--good); border:1px solid color-mix(in srgb, var(--good) 35%, var(--line));}
+
+  .layout{display:grid; grid-template-columns:230px minmax(0,1fr); gap:0; max-width:1180px; margin:0 auto;}
+  nav.toc{padding:2rem 1.25rem 3rem; position:sticky; top:0; align-self:start; max-height:100vh; overflow-y:auto; border-right:1px solid var(--line);}
+  nav.toc .toc-title{font-size:.68rem; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-faint); margin:0 0 .9rem;}
+  nav.toc ol{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:.15rem;}
+  nav.toc a{display:flex; align-items:center; gap:.6rem; text-decoration:none; color:var(--ink-soft); font-size:.86rem; padding:.32rem .4rem; border-radius:4px;}
+  nav.toc a:hover{color:var(--ink); background:var(--surface-2);}
+  nav.toc .b{flex:none; width:1.55rem; height:1.55rem; border-radius:50%; border:1.5px solid var(--ink-faint); display:flex; align-items:center; justify-content:center; font-family:"IBM Plex Mono",monospace; font-size:.68rem; color:var(--ink-faint);}
+
+  main{padding:2.5rem clamp(1.25rem,4vw,3.5rem) 6rem; min-width:0;}
+  section{padding-top:2.75rem; margin-top:2.75rem; border-top:1px solid var(--line); scroll-margin-top:1.5rem;}
+  section:first-of-type{border-top:none; margin-top:1rem; padding-top:0;}
+  .sec-head{display:flex; align-items:baseline; gap:.9rem; margin-bottom:1.1rem;}
+  .balloon{flex:none; width:2.5rem; height:2.5rem; border-radius:50%; border:2px solid var(--accent); color:var(--accent-ink); display:flex; align-items:center; justify-content:center; font-family:"IBM Plex Mono",monospace; font-weight:600; font-size:1.02rem; background:var(--accent-soft);}
+  .sec-head h2{font-size:clamp(1.25rem,2.3vw,1.6rem);}
+  .sub-head{font-size:1rem; margin:1.6rem 0 .5rem; letter-spacing:.01em;}
+
+  p{margin:.75rem 0; max-width:76ch;}
+  .lede{color:var(--ink-soft); font-size:1.02rem; max-width:72ch;}
+  ul{margin:.75rem 0; padding-left:1.3rem; max-width:74ch;}
+  li{margin:.4rem 0;}
+  strong{color:var(--ink); font-weight:600;}
+
+  .twrap{overflow-x:auto; margin-top:1.1rem; border:1px solid var(--line); border-radius:6px; background:var(--surface); box-shadow:var(--shadow);}
+  table{border-collapse:collapse; width:100%; min-width:520px; font-size:.87rem;}
+  thead th{text-align:left; font-family:"IBM Plex Mono",monospace; font-size:.65rem; letter-spacing:.07em; text-transform:uppercase; color:var(--ink-faint); padding:.6rem .85rem; background:var(--surface-2); border-bottom:1px solid var(--line); white-space:nowrap;}
+  tbody td{padding:.6rem .85rem; border-bottom:1px solid var(--line); vertical-align:top;}
+  tbody tr:last-child td{border-bottom:none;}
+  tbody tr:hover{background:var(--surface-2);}
+
+  .diagram-card{margin-top:1.25rem; border:1px solid var(--line); border-radius:6px; background:var(--surface); box-shadow:var(--shadow); overflow:hidden;}
+  .diagram-card .dc-title{padding:.6rem 1rem; background:var(--surface-2); border-bottom:1px solid var(--line); font-family:"IBM Plex Mono",monospace; font-size:.72rem; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-faint);}
+  .diagram-card .dc-body{padding:1rem; overflow-x:auto;}
+  pre.mermaid{margin:0; font-family:"IBM Plex Mono",monospace; font-size:.78rem; color:var(--ink-soft); white-space:pre;}
+
+  pre.code{margin:1.1rem 0 0; background:var(--mono-bg); color:var(--code-ink); border:1px solid var(--line); border-radius:6px; padding:1rem 1.15rem; overflow-x:auto; font-family:"IBM Plex Mono",monospace; font-size:.8rem; line-height:1.55;}
+  .code-label{display:block; font-family:"IBM Plex Mono",monospace; font-size:.68rem; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-faint); margin:1.1rem 0 -.4rem;}
+
+  .callout{margin-top:1.25rem; border-left:3px solid var(--accent); background:var(--accent-soft); padding:.9rem 1.15rem; border-radius:0 6px 6px 0;}
+  .callout.warn{border-color:var(--warn); background:var(--warn-soft);}
+  .callout.good{border-color:var(--good); background:var(--good-soft);}
+  .callout p{margin:.3rem 0; font-size:.92rem;}
+  .callout .lbl{font-family:"IBM Plex Mono",monospace; font-size:.68rem; letter-spacing:.1em; text-transform:uppercase; color:var(--accent-ink); display:block; margin-bottom:.3rem;}
+  .callout.warn .lbl{color:var(--warn);}
+  .callout.good .lbl{color:var(--good);}
+
+  .flow{margin-top:1.25rem; display:flex; flex-direction:column; gap:0;}
+  .flow-step{display:grid; grid-template-columns:2.2rem 1fr; gap:1rem; position:relative; padding-bottom:1.2rem;}
+  .flow-step:last-child{padding-bottom:0;}
+  .flow-step::before{content:""; position:absolute; left:1.09rem; top:2.2rem; bottom:0; width:1.5px; background:var(--line);}
+  .flow-step:last-child::before{display:none;}
+  .flow-num{width:2.2rem; height:2.2rem; border-radius:50%; background:var(--surface); border:1.5px solid var(--ink-soft); display:flex; align-items:center; justify-content:center; font-family:"IBM Plex Mono",monospace; font-size:.78rem; font-weight:600; color:var(--ink-soft); flex:none; z-index:1;}
+  .flow-body h4{font-family:"Public Sans"; text-transform:none; font-size:.94rem; font-weight:600; margin:0 0 .2rem; letter-spacing:0;}
+  .flow-body p{margin:0; font-size:.86rem; color:var(--ink-soft); max-width:66ch;}
+
+  .svc-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:.9rem; margin-top:1.1rem;}
+  .svc-card{border:1px solid var(--line); border-radius:6px; background:var(--surface); box-shadow:var(--shadow); padding:.9rem 1.05rem;}
+  .svc-card .name{font-family:"IBM Plex Mono",monospace; font-size:.82rem; font-weight:600; color:var(--accent-ink); display:block; margin-bottom:.3rem;}
+  .svc-card p{margin:0; font-size:.85rem; color:var(--ink-soft);}
+
+  footer.doc-foot{padding:2.5rem clamp(1.25rem,4vw,3.5rem) 3rem; color:var(--ink-faint); font-size:.78rem; border-top:1px solid var(--line);}
+
+  @media (max-width: 880px){
+    .layout{grid-template-columns:1fr;}
+    nav.toc{position:relative; max-height:none; border-right:none; border-bottom:1px solid var(--line);}
+    .tb-grid{grid-template-columns:repeat(2,1fr);}
+  }
+</style>
+
+<div class="doc">
+  <div class="titleblock">
+    <p class="eyebrow"><span class="stage-badge">● Full Production System</span> Software Architecture &amp; Design Specification</p>
+    <h1>Ballooned Drawing Extraction — Production Architecture</h1>
+    <p class="sub">Implements the complete requirement set — the reconciliation/sign-off gate, Entra ID auth and segregation of duties, and the NFR targets for 200-drawing batches — as an event-driven microservices system on Azure.</p>
+    <div class="tb-grid">
+      <div class="tb-cell"><span class="k">Doc No.</span><span class="v">BDX-ARCH-FULL-001</span></div>
+      <div class="tb-cell"><span class="k">Rev</span><span class="v">A — Draft</span></div>
+      <div class="tb-cell"><span class="k">Date</span><span class="v">2026-08-26</span></div>
+      <div class="tb-cell"><span class="k">Companion</span><span class="v">architecture-poc.html</span></div>
+    </div>
+    <div class="scope-strip">
+      <span class="tag">Entra ID auth</span>
+      <span class="tag">Reconciliation gate</span>
+      <span class="tag">Async pipeline</span>
+      <span class="tag">Postgres ACID</span>
+      <span class="tag">Full audit trail</span>
+    </div>
+  </div>
+
+  <div class="layout">
+    <nav class="toc" aria-label="Table of contents">
+      <p class="toc-title">Contents</p>
+      <ol>
+        <li><a href="#h1"><span class="b">1</span>High-Level Design</a></li>
+        <li><a href="#h2"><span class="b">2</span>Low-Level Design</a></li>
+        <li><a href="#h3"><span class="b">3</span>API Specification</a></li>
+        <li><a href="#h4"><span class="b">4</span>Data Specification</a></li>
+        <li><a href="#h5"><span class="b">5</span>NFR Sizing Notes</a></li>
+        <li><a href="#h6"><span class="b">6</span>If Open Questions Resolve</a></li>
+      </ol>
+    </nav>
+
+    <main>
+      <section id="h1">
+        <div class="sec-head"><span class="balloon">1</span><h2>High-Level Design</h2></div>
+
+        <h3 class="sub-head">1.1 System Architecture Overview</h3>
+        <p><strong>Pattern: event-driven microservices</strong>, split along a genuine operational fault line: AI-bound, bursty, latency-variable work (balloon detection, extraction) versus human-paced, steady, consistency-critical work (review, reconciliation, sign-off). Services communicate synchronously via REST (through Azure API Management) for anything a client waits on, and asynchronously via Azure Service Bus for the extraction pipeline.</p>
+        <div class="svc-grid">
+          <div class="svc-card"><span class="name">Ingestion API</span><p>Upload, file validation, drawing/revision metadata, versioning</p></div>
+          <div class="svc-card"><span class="name">Extraction Worker</span><p>Balloon detection + field extraction (Document Intelligence + Azure OpenAI), runs off the queue</p></div>
+          <div class="svc-card"><span class="name">Reconciliation API</span><p>Review sessions, discrepancy logging, sign-off, segregation-of-duties enforcement</p></div>
+          <div class="svc-card"><span class="name">Export Service</span><p>Template-driven Excel generation, batch packaging</p></div>
+          <div class="svc-card"><span class="name">Audit &amp; Notification</span><p>Immutable audit log, job-status push notifications</p></div>
+        </div>
+
+        <h3 class="sub-head">1.2 Component Diagram</h3>
+        <div class="diagram-card">
+          <div class="dc-title">mermaid · flowchart</div>
+          <div class="dc-body">
+<pre class="mermaid">
+flowchart TB
+    subgraph Client
+        SPA[React SPA&lt;br/&gt;Analyst / Reviewer / Manager]
+    end
+
+    SPA -->|HTTPS| FD[Azure Front Door&lt;br/&gt;CDN + WAF]
+    FD --> APIM[Azure API Management&lt;br/&gt;OAuth2/JWT validation, rate limiting]
+
+    APIM --> ING[Ingestion API&lt;br/&gt;Container App]
+    APIM --> REC[Reconciliation API&lt;br/&gt;Container App]
+    APIM --> EXP[Export Service&lt;br/&gt;Container App]
+    APIM --> STAT[Status/Dashboard API&lt;br/&gt;Container App]
+
+    ING --> BLOB[(Blob Storage&lt;br/&gt;drawings, exports)]
+    ING --> PG[(Azure PostgreSQL&lt;br/&gt;Flexible Server)]
+    ING -->|enqueue job| SB[/Azure Service Bus&lt;br/&gt;queue: extraction-jobs/]
+
+    SB --> WRK[Extraction Worker&lt;br/&gt;Container Apps, KEDA-scaled]
+    WRK --> DI[Azure AI Document Intelligence]
+    WRK --> AOAI[Azure OpenAI&lt;br/&gt;GPT-4o]
+    WRK --> PG
+    WRK -->|publish| SB2[/Service Bus topic:&lt;br/&gt;drawing-events/]
+
+    SB2 --> WPS[Azure Web PubSub&lt;br/&gt;push job status]
+    WPS --> SPA
+
+    REC --> PG
+    REC --> SB2
+    EXP --> PG
+    EXP --> BLOB
+
+    SB2 --> AUD[Audit Service]
+    AUD --> PG
+    AUD --> LA[Log Analytics]
+
+    APIM -.->|validate token| AAD[Azure Entra ID]
+    ING -.->|secrets via MI| KV[(Azure Key Vault)]
+    WRK -.->|secrets via MI| KV
+    REC -.-> RED[(Azure Cache for Redis&lt;br/&gt;session + review-draft cache)]
+</pre>
+          </div>
+        </div>
+        <p>External dependencies: Azure Entra ID, Azure AI Document Intelligence, Azure OpenAI, Azure Service Bus, Azure Web PubSub, Azure Key Vault (secrets via managed identity), Azure Monitor / Log Analytics / Application Insights.</p>
+
+        <h3 class="sub-head">1.3 Data Flow — "Drawing from upload to signed-off export"</h3>
+        <div class="flow">
+          <div class="flow-step"><div class="flow-num">1</div><div class="flow-body"><h4>Upload</h4><p>Analyst uploads via SPA → Front Door → APIM (JWT validated, <span class="mono">Analyst</span> role) → Ingestion API.</p></div></div>
+          <div class="flow-step"><div class="flow-num">2</div><div class="flow-body"><h4>Validate &amp; enqueue</h4><p>Ingestion API validates quality (FR-03), extracts title-block metadata (FR-02), creates <span class="mono">Drawing</span> + <span class="mono">DrawingRevision</span> rows (<span class="mono">status=Uploaded</span>), stores the file, enqueues an <span class="mono">extraction-jobs</span> message.</p></div></div>
+          <div class="flow-step"><div class="flow-num">3</div><div class="flow-body"><h4>Extract</h4><p>Extraction Worker (KEDA-scaled on queue depth) runs balloon detection + field extraction, writes <span class="mono">Balloon</span>/<span class="mono">ExtractedField</span> rows with confidence scores. Status → <span class="mono">Extracted</span>; event published to <span class="mono">drawing-events</span>.</p></div></div>
+          <div class="flow-step"><div class="flow-num">4</div><div class="flow-body"><h4>Notify</h4><p>Audit Service records the event; Web PubSub pushes "ready for review" to any connected SPA session.</p></div></div>
+          <div class="flow-step"><div class="flow-num">5</div><div class="flow-body"><h4>Analyst review</h4><p>Side-by-side view (FR-21); low-confidence balloons pre-sorted first. Each action written through to Postgres, cached in Redis for the active session.</p></div></div>
+          <div class="flow-step"><div class="flow-num">6</div><div class="flow-body"><h4>Independent reconciliation</h4><p>Second reviewer (enforced ≠ analyst, FR-22) repeats the pass. Mismatches logged with both identities (FR-23); balloon stays <span class="mono">Unresolved</span> until explicitly resolved.</p></div></div>
+          <div class="flow-step"><div class="flow-num">7</div><div class="flow-body"><h4>Sign-off</h4><p>Once 100% reconciled (FR-24 gate), reviewer signs off (FR-26): one transaction flips status + writes <span class="mono">SignOff</span>, then the <strong>outbox pattern</strong> publishes <span class="mono">DrawingSignedOff</span>.</p></div></div>
+          <div class="flow-step"><div class="flow-num">8</div><div class="flow-body"><h4>Export</h4><p>Export Service resolves the template (FR-17), reads the locked record, generates the <span class="mono">.xlsx</span>, stores it. Export from a non-signed-off revision returns <span class="mono">409</span> (FR-18).</p></div></div>
+          <div class="flow-step"><div class="flow-num">9</div><div class="flow-body"><h4>Audit</h4><p>Every step 2–8 writes an append-only <span class="mono">AuditEvent</span> (actor, action, timestamp, before/after) — FR-27.</p></div></div>
+        </div>
+
+        <h3 class="sub-head">1.4 Architectural Trade-offs</h3>
+        <div class="twrap"><table>
+          <thead><tr><th>#</th><th>Decision</th><th>Chosen because</th><th>Sacrificed</th></tr></thead>
+          <tbody>
+            <tr><td>1</td><td><strong>Async (Service Bus) pipeline, not sync request/response</strong></td><td>Extraction latency is inherently variable; a queue gives backpressure and per-drawing retry isolation for the 200-drawing batch NFR.</td><td>Immediate response — client must poll/subscribe (Web PubSub) instead of getting a result inline.</td></tr>
+            <tr><td>2</td><td><strong>Microservices split on AI-bound vs. human-paced work</strong></td><td>Extraction Worker load is bursty and wants to scale to zero between batches; Reconciliation load is steady and human click-driven. Scaling them together wastes cost either direction.</td><td>Operational simplicity — needs APIM, service-to-service auth, distributed tracing, shared schema-ownership discipline.</td></tr>
+            <tr><td>3</td><td><strong>Strong consistency (Postgres ACID) for reconciliation state</strong></td><td>Sign-off is the compliance-critical gate — two reviewers must never both sign off the same revision. Needs transactional guarantees, not eventual consistency.</td><td>Some write-throughput ceiling under heavy concurrent review — acceptable since review is human-paced; PgBouncer mitigates if it becomes real.</td></tr>
+            <tr><td>4</td><td><strong>LLM-based extraction (Azure OpenAI) over deterministic parsing</strong></td><td>Dimension/tolerance/GD&amp;T notation varies too much for a hand-written parser to generalize across drawing standards and eras.</td><td>Determinism/full explainability — mitigated, not eliminated, by per-field confidence scores and the mandatory human reconciliation gate.</td></tr>
+          </tbody>
+        </table></div>
+      </section>
+
+      <section id="h2">
+        <div class="sec-head"><span class="balloon">2</span><h2>Low-Level Design</h2></div>
+
+        <h3 class="sub-head">2.1 Core Modules &amp; Classes (by service)</h3>
+        <p><strong>Ingestion API</strong> — <span class="mono">DrawingUploadController</span>, <span class="mono">FileValidator</span> (FR-03), <span class="mono">TitleBlockExtractor</span>, <span class="mono">RevisionManager</span> (FR-04: new revision never overwrites a reconciled one), <span class="mono">ExtractionJobPublisher</span> (outbox-wrapped).</p>
+        <p><strong>Extraction Worker</strong> — <span class="mono">ExtractionOrchestrator</span>, <span class="mono">BalloonDetector</span>, <span class="mono">ToleranceNormalizer</span>, <span class="mono">GdtParser</span> (carried forward from the POC, now unit-testable with injected clients), <span class="mono">ConfidenceScorer</span> (drives FR-14 review sort order), <span class="mono">ExtractionCircuitBreaker</span>.</p>
+        <p><strong>Reconciliation API</strong> — <span class="mono">ReviewSessionService</span>, <span class="mono">BalloonReviewHandler</span>, <span class="mono">DiscrepancyLogger</span> (FR-23), <span class="mono">SegregationOfDutiesGuard</span> (FR-22, rejects with 403 when reviewer = analyst), <span class="mono">SignOffService</span> (validates the 100%-reconciled precondition inside the status-flip transaction).</p>
+        <p><strong>Export Service</strong> — <span class="mono">TemplateResolver</span> (FR-17, per-program column mapping), <span class="mono">ExcelGenerator</span>, <span class="mono">PackageBundler</span> (FR-20).</p>
+        <p><strong>Audit &amp; Notification Service</strong> — <span class="mono">AuditEventConsumer</span> (FR-27), <span class="mono">NotificationDispatcher</span> (Web PubSub groups keyed by drawing revision).</p>
+
+        <h3 class="sub-head">2.2 Design Patterns</h3>
+        <div class="twrap"><table>
+          <thead><tr><th>Pattern</th><th>Where</th><th>Why</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Saga / explicit state machine</strong></td><td><span class="mono">DrawingRevision.status</span>: Uploaded → Extracted → UnderReview → Reconciled → SignedOff → Exported, plus ExtractionFailed/Stale</td><td>Every legal transition explicit and testable; illegal transitions rejected at the domain layer.</td></tr>
+            <tr><td><strong>Outbox pattern</strong></td><td>Ingestion (job enqueue), Reconciliation (sign-off event)</td><td>Guarantees a Postgres write and its Service Bus message are never inconsistent.</td></tr>
+            <tr><td><strong>Circuit breaker</strong></td><td>Extraction Worker → Document Intelligence / Azure OpenAI</td><td>Fails fast after N failures rather than piling up retries; jobs fall back to manual entry instead of blocking the queue.</td></tr>
+            <tr><td><strong>Retry, exponential backoff + jitter</strong></td><td>All outbound Azure SDK calls</td><td>Standard mitigation for 429/5xx throttling.</td></tr>
+            <tr><td><strong>Strategy pattern</strong></td><td><span class="mono">IExtractionStrategy</span> (from POC)</td><td>Vision-grounded vs. text-only vs. future custom-model, selected per drawing-quality tier.</td></tr>
+            <tr><td><strong>Repository pattern</strong></td><td>Data access in every service</td><td>Isolates Postgres specifics from domain logic; unit testing without a live DB.</td></tr>
+            <tr><td><strong>CQRS-lite</strong></td><td>Status/Dashboard API reads a denormalized model refreshed by <span class="mono">drawing-events</span></td><td>Keeps FR-28/FR-29 reporting from competing with the transactional review write path.</td></tr>
+            <tr><td><strong>Idempotency keys</strong></td><td><span class="mono">POST /drawings</span>, <span class="mono">POST /drawings/{id}/export</span></td><td>A retried upload/export request can't create a duplicate revision or export.</td></tr>
+          </tbody>
+        </table></div>
+
+        <h3 class="sub-head">2.3 Error Handling &amp; Edge Cases</h3>
+        <div class="twrap"><table>
+          <thead><tr><th>Condition</th><th>Handling</th></tr></thead>
+          <tbody>
+            <tr><td>Document Intelligence / Azure OpenAI outage</td><td>Circuit breaker opens; job <span class="mono">ExtractionFailed</span>; drawing remains fully usable via manual entry — the human path never depends on the AI path being up.</td></tr>
+            <tr><td>Malformed/non-schema LLM output</td><td>One repair re-prompt; second failure → <span class="mono">confidence=0</span> + <span class="mono">extractionError</span>, never dropped.</td></tr>
+            <tr><td>Duplicate balloon numbers</td><td>Flagged at write time; status cannot advance past <span class="mono">Extracted</span> until resolved (FR-08) — enforced by the state machine.</td></tr>
+            <tr><td>Concurrent sign-off attempts</td><td>Optimistic concurrency via <span class="mono">rowVersion</span>; second attempt gets <span class="mono">409</span>.</td></tr>
+            <tr><td>Reviewer account = analyst account</td><td><span class="mono">SegregationOfDutiesGuard</span> rejects <span class="mono">403</span> — checked server-side, never trusted from the client.</td></tr>
+            <tr><td>Revision superseded mid-reconciliation</td><td>In-progress session marked <span class="mono">Stale</span> (FR-04) rather than merged; reviewer redirected to the new revision.</td></tr>
+            <tr><td>Export before sign-off</td><td>Rejected at the domain layer with <span class="mono">409</span> and the open-balloon list (FR-18) — no UI-only gate.</td></tr>
+            <tr><td>Poison message in queue</td><td>Service Bus dead-letters after max delivery count; scheduled alert on non-empty DLQ.</td></tr>
+            <tr><td>Upload interrupted / corrupted file</td><td>Server-side checksum validation before enqueue; specific, actionable <span class="mono">422</span>.</td></tr>
+          </tbody>
+        </table></div>
+      </section>
+
+      <section id="h3">
+        <div class="sec-head"><span class="balloon">3</span><h2>API Specification</h2></div>
+
+        <h3 class="sub-head">3.1 Interface Protocols</h3>
+        <p><strong>REST over HTTPS, via Azure API Management</strong>, for everything the SPA calls directly. Chosen over GraphQL because client data needs are fixed and resource-shaped, not ad-hoc/composable. Chosen over gRPC for external endpoints because the client is a browser SPA and REST/JSON keeps tooling simple. <strong>Azure Service Bus</strong> (async messaging) for Ingestion → Extraction Worker and the <span class="mono">drawing-events</span> fan-out. <strong>Azure Web PubSub</strong> (WebSockets) for pushing status changes in real time, avoiding client polling.</p>
+
+        <h3 class="sub-head">3.2 Endpoint Definitions</h3>
+        <p><strong><span class="mono">POST /api/v1/drawings</span></strong> — uploads a new drawing (or batch) and starts async processing.</p>
+        <p><strong>Auth:</strong> Bearer JWT, role <span class="mono">Analyst</span> or <span class="mono">Manager</span>.</p>
+        <span class="code-label">Response 202 Accepted</span>
+        <pre class="code">{
+  "drawingRevisionId": "7c1a...-uuid",
+  "drawingNumber": "DWG-10245",
+  "revision": "C",
+  "status": "Uploaded",
+  "statusUrl": "/api/v1/drawings/7c1a...-uuid",
+  "realtimeChannel": "wss://bdx.webpubsub.azure.com/client/hubs/drawing-status?group=7c1a..."
+}</pre>
+        <p><strong>Status codes:</strong> <span class="mono">202</span> accepted · <span class="mono">400</span> malformed · <span class="mono">409</span> idempotency key reused with different payload · <span class="mono">422</span> quality below threshold · <span class="mono">413</span> too large.</p>
+
+        <p style="margin-top:1.6rem"><strong><span class="mono">POST /api/v1/drawings/{drawingRevisionId}/signoff</span></strong> — reviewer signs off a fully reconciled revision, locking it.</p>
+        <p><strong>Auth:</strong> Bearer JWT, role <span class="mono">Reviewer</span>; must not equal the analyst who confirmed any balloon in this revision.</p>
+        <span class="code-label">Response 200 OK</span>
+        <pre class="code">{
+  "drawingRevisionId": "7c1a...-uuid",
+  "status": "SignedOff",
+  "signedBy": "reviewer@satincorp.com",
+  "signedAt": "2026-08-26T14:32:10Z",
+  "rowVersion": 4
+}</pre>
+        <span class="code-label">Response 409 Conflict — incomplete reconciliation</span>
+        <pre class="code">{
+  "error": "IncompleteReconciliation",
+  "message": "12 of 47 balloons are not yet reconciled.",
+  "openBalloonIds": ["b-0007", "b-0012", "..."]
+}</pre>
+        <span class="code-label">Response 403 Forbidden — segregation of duties</span>
+        <pre class="code">{
+  "error": "SegregationOfDutiesViolation",
+  "message": "Signer must differ from the analyst who confirmed one or more balloons on this revision."
+}</pre>
+        <p><strong>Status codes:</strong> <span class="mono">200</span> signed off · <span class="mono">403</span> segregation-of-duties violation · <span class="mono">404</span> unknown revision · <span class="mono">409</span> incomplete reconciliation or concurrent sign-off.</p>
+
+        <div class="callout">
+          <span class="lbl">Additional endpoints</span>
+          <p><span class="mono">GET /drawings/{id}</span>, <span class="mono">POST /drawings/{id}/balloons/{balloonId}/review</span>, <span class="mono">POST /drawings/{id}/export</span>, <span class="mono">GET /packages/{id}/status</span> follow the same contract conventions and are enumerated in the OpenAPI spec generated from this document — omitted here per the "at least 2 primary endpoints" scope of this document.</p>
+        </div>
+
+        <h3 class="sub-head">3.3 Authentication &amp; Authorization</h3>
+        <ul>
+          <li><strong>Identity provider:</strong> Azure Entra ID. SPA authenticates via OAuth 2.0 Authorization Code + PKCE; service-to-service calls use managed identity + client-credentials — no shared secrets in app config, all resolved through Azure Key Vault.</li>
+          <li><strong>MFA:</strong> enforced at the Entra ID Conditional Access layer, not application code.</li>
+          <li><strong>Authorization:</strong> Entra ID App Roles (<span class="mono">Analyst</span>, <span class="mono">Reviewer</span>, <span class="mono">Manager</span>, <span class="mono">Admin</span>) as JWT claims; APIM validates the token at the edge, and each service independently re-checks role + business-rule authorization — defense in depth.</li>
+          <li><strong>Scoping:</strong> every request is scoped to <span class="mono">programId</span>; Entra ID group membership maps to allowed programs, checked on every read/write.</li>
+        </ul>
+      </section>
+
+      <section id="h4">
+        <div class="sec-head"><span class="balloon">4</span><h2>Data Specification</h2></div>
+
+        <h3 class="sub-head">4.1 Entity-Relationship Overview</h3>
+        <div class="diagram-card">
+          <div class="dc-title">mermaid · erDiagram</div>
+          <div class="dc-body">
+<pre class="mermaid">
+erDiagram
+    PROGRAM ||--o{ DRAWING : contains
+    DRAWING ||--o{ DRAWING_REVISION : has
+    DRAWING_REVISION ||--o{ BALLOON : contains
+    BALLOON ||--o{ EXTRACTED_FIELD : has
+    BALLOON ||--o{ REVIEW_ACTION : "reviewed by"
+    DRAWING_REVISION ||--o| SIGN_OFF : "locked by"
+    DRAWING_REVISION ||--o{ AUDIT_EVENT : logs
+    DRAWING_REVISION ||--o{ EXPORT_PACKAGE : "exported as"
+    PROGRAM ||--o{ TEMPLATE : configures
+
+    PROGRAM {
+        uuid id PK
+        string name
+        string exportControlFlag
+    }
+    DRAWING {
+        uuid id PK
+        uuid program_id FK
+        string drawing_number
+    }
+    DRAWING_REVISION {
+        uuid id PK
+        uuid drawing_id FK
+        string revision_label
+        int sheet_count
+        string status
+        int row_version
+        string blob_path
+        timestamp uploaded_at
+    }
+    BALLOON {
+        uuid id PK
+        uuid drawing_revision_id FK
+        int balloon_number
+        int page
+        jsonb bounding_box
+        string status
+    }
+    EXTRACTED_FIELD {
+        uuid id PK
+        uuid balloon_id FK
+        numeric nominal_value
+        string unit
+        string tolerance_type
+        numeric upper_tol
+        numeric lower_tol
+        jsonb gdt
+        numeric confidence
+        string source
+    }
+    REVIEW_ACTION {
+        uuid id PK
+        uuid balloon_id FK
+        uuid reviewer_id FK
+        string action_type
+        jsonb previous_value
+        jsonb new_value
+        timestamp created_at
+    }
+    SIGN_OFF {
+        uuid id PK
+        uuid drawing_revision_id FK
+        uuid signed_by FK
+        timestamp signed_at
+        string note
+    }
+    AUDIT_EVENT {
+        uuid id PK
+        uuid drawing_revision_id FK
+        uuid actor_id FK
+        string event_type
+        jsonb payload
+        timestamp created_at
+    }
+    EXPORT_PACKAGE {
+        uuid id PK
+        uuid drawing_revision_id FK
+        string template_id
+        string blob_path
+        timestamp exported_at
+    }
+    TEMPLATE {
+        uuid id PK
+        uuid program_id FK
+        string name
+        jsonb column_mapping
+    }
+</pre>
+          </div>
+        </div>
+
+        <h3 class="sub-head">4.2 Data Storage Choices</h3>
+        <div class="twrap"><table>
+          <thead><tr><th>Store</th><th>Used for</th><th>Justification</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Azure Database for PostgreSQL – Flexible Server</strong></td><td>All relational entities above</td><td>ACID transactions non-negotiable for the sign-off gate; mature row-level locking supports optimistic concurrency; rich SQL supports FR-28/FR-29 reporting without a separate analytics store at this scale.</td></tr>
+            <tr><td><strong>Azure Blob Storage</strong></td><td>Source drawing files, generated Excel exports</td><td>Large binary objects don't belong in Postgres rows; Hot/Cool/Archive tiering maps onto §4.3 lifecycle policy.</td></tr>
+            <tr><td><strong>Azure Cache for Redis</strong></td><td>Active review-session draft state, APIM rate-limit counters</td><td>Keeps the side-by-side UI responsive without hitting Postgres on every keystroke; TTL'd, never the system of record.</td></tr>
+            <tr><td><strong>Azure Service Bus</strong></td><td><span class="mono">extraction-jobs</span> queue, <span class="mono">drawing-events</span> topic</td><td>Durable, dead-letter-capable messaging for the async pipeline — not a data store, noted because it sits on the data path.</td></tr>
+          </tbody>
+        </table></div>
+
+        <h3 class="sub-head">4.3 Caching &amp; Lifecycle Strategy</h3>
+        <div class="callout good">
+          <span class="lbl">Policy</span>
+          <p><strong>Cache invalidation:</strong> Redis review-draft entries invalidated on explicit save (write-through to Postgres) and a 30-min inactivity TTL; dashboard read-model entries invalidated by the <span class="mono">drawing-events</span> consumer, not a timer.</p>
+          <p><strong>Blob lifecycle:</strong> Hot while a revision is active (pre-SignedOff); Cool 90 days after sign-off; Archive at 1 year — exact periods are program-configurable, since AS9102/PPAP retention varies by customer contract.</p>
+          <p><strong>Deletion:</strong> application-level delete is always soft; hard deletion is a separate, audited compliance workflow that removes content while preserving a tombstone <span class="mono">AuditEvent</span>.</p>
+          <p><strong>Audit retention:</strong> <span class="mono">AuditEvent</span> rows are never deleted by the application; purge, if ever required, is a separately governed DBA process.</p>
+        </div>
+      </section>
+
+      <section id="h5">
+        <div class="sec-head"><span class="balloon">5</span><h2>Non-Functional Sizing Notes</h2></div>
+        <div class="twrap"><table>
+          <thead><tr><th>Target (requirements §8)</th><th>Design implication</th></tr></thead>
+          <tbody>
+            <tr><td>100-balloon drawing &lt; 2 min end-to-end</td><td>Extraction Worker parallelizes per-page Document Intelligence calls; Azure OpenAI calls batched per-page, not per-balloon.</td></tr>
+            <tr><td>200 drawings/package without degradation</td><td>KEDA-scaled Extraction Worker pool scales out on queue depth; Ingestion API accepts the whole batch immediately (202 per file).</td></tr>
+            <tr><td>99.5% uptime, no data loss on transient restart</td><td>Service Bus at-least-once delivery across worker restarts; Postgres is the only source of truth for state.</td></tr>
+            <tr><td>WCAG 2.1 AA review UI</td><td>SPA concern — noted as a dependency the frontend team owns against this API contract.</td></tr>
+          </tbody>
+        </table></div>
+      </section>
+
+      <section id="h6">
+        <div class="sec-head"><span class="balloon">6</span><h2>If the Open Questions Resolve Differently</h2></div>
+        <ul>
+          <li><strong>Multi-tenant SaaS instead of single-tenant:</strong> <span class="mono">Program</span> becomes tenant-scoped with row-level security in Postgres; Entra ID app registration becomes multi-tenant/B2B; Blob containers gain a tenant prefix and per-tenant SAS scoping.</li>
+          <li><strong>Azure Government required for ITAR-flagged programs:</strong> Document Intelligence and Azure OpenAI model/region availability narrows substantially — likely needs a hybrid design (Gov boundary for controlled programs, Commercial for the rest), worth a dedicated spike before committing.</li>
+          <li><strong>Native CAD input in scope:</strong> adds a new Ingestion path (CAD parser service) upstream of the existing pipeline; does not change the Extraction Worker → Reconciliation → Export chain.</li>
+        </ul>
+      </section>
+    </main>
+  </div>
+
+  <footer class="doc-foot">Ballooned Drawing Extraction — Production Architecture, Rev A (Draft). Companion to architecture-poc.html.</footer>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+  try {
+    if (window.mermaid) {
+      mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'neutral' });
+    }
+  } catch (e) {}
+</script>
+
+</body>
+</html>
