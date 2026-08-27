@@ -3,7 +3,7 @@
   "functions": {
     "app.py": {
       "maxDuration": 300,
-      "excludeFiles": "{tests/**,doc/**,POC_App/**,*.md,.venv/**,__pycache__/**,.git/**}"
+      "excludeFiles": "{tests/**,doc/**,*.md,.venv/**,__pycache__/**,.git/**}"
     }
   }
 }

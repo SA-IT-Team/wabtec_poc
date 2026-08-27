@@ -1,9 +1,8 @@
-"""Tests for app.py -- the Vercel Flask entry point. Mirrors the same request/response contract
-as function_app.py (Azure) but exercises the parts that are genuinely new on this host: the
-API_ACCESS_KEY gate, CORS headers, the blob-first large-file upload path, and Flask routing/error
-mapping. The underlying pipeline wiring (build_pipeline, storage helpers, TableStorageJobStore) is
-monkeypatched everywhere here -- it's already covered by the integration tests, and none of it
-should touch the network in a unit test regardless of which HTTP host is calling it.
+"""Tests for app.py -- the HTTP layer. Covers the API_ACCESS_KEY gate, CORS headers, both upload
+paths (direct multipart and blob-first), and Flask routing/error mapping. The underlying pipeline
+wiring (build_pipeline, storage helpers, TableStorageJobStore) is monkeypatched everywhere here --
+it's already covered by the integration tests, and none of it should touch the network in a unit
+test.
 """
 from __future__ import annotations
 

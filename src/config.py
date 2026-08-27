@@ -1,6 +1,6 @@
-"""Environment-driven configuration. No secrets are hard-coded; all come from platform env vars --
-Function App settings (local.settings.json locally, App Settings / Key Vault references in Azure)
-or Vercel env vars (.env locally, the Vercel dashboard/CLI in production)."""
+"""Environment-driven configuration. No secrets are hard-coded; all come from env vars -- a local
+.env file in development (loaded by app.py), the Vercel project's environment variables in
+production. See .env.example for the full list."""
 from __future__ import annotations
 
 import os
@@ -28,19 +28,8 @@ class Settings:
                 raise RuntimeError(f"Missing required environment variable: {name}")
             return val
 
-        def require_any(*names: str) -> str:
-            for name in names:
-                val = os.environ.get(name)
-                if val:
-                    return val
-            raise RuntimeError(f"Missing required environment variable: {' or '.join(names)}")
-
         return cls(
-            # AzureWebJobsStorage is the Azure Functions host's own magic name for this connection
-            # string; AZURE_STORAGE_CONNECTION_STRING is the platform-neutral name used on Vercel
-            # (app.py) and preferred going forward -- both are honored so an existing Azure
-            # Functions deployment doesn't need its app settings renamed.
-            storage_connection_string=require_any("AZURE_STORAGE_CONNECTION_STRING", "AzureWebJobsStorage"),
+            storage_connection_string=require("AZURE_STORAGE_CONNECTION_STRING"),
             doc_intelligence_endpoint=require("DOCUMENT_INTELLIGENCE_ENDPOINT"),
             doc_intelligence_key=require("DOCUMENT_INTELLIGENCE_KEY"),
             claude_api_key=require("CLAUDE_API_KEY"),

@@ -1,6 +1,5 @@
-"""Wires the extraction pipeline together from Settings. Shared by every HTTP entry point (Azure
-Functions' function_app.py and Vercel's app.py) so the two hosts can never wire up the
-pipeline differently by accident.
+"""Wires the extraction pipeline together from Settings. Called by app.py's routes so every
+entry point builds an identically-configured pipeline.
 """
 from __future__ import annotations
 

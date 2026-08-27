@@ -1,5 +1,4 @@
-"""Vercel entry point: a Flask WSGI app implementing the same endpoints as function_app.py (Azure
-Functions), reusing all the same src/ business logic -- only the HTTP transport layer differs.
+"""The whole backend: a Flask WSGI app, deployed to Vercel, wrapping the pipeline in src/.
 
 Vercel detects Flask via `flask` in requirements.txt and routes every request straight to the
 `app` object defined here (framework-preset mode) -- no vercel.json rewrites needed, the
@@ -12,18 +11,23 @@ non-framework) Vercel convention this app doesn't use. See deployment-vercel.md.
     POST /api/drawings/upload-url       -- get a direct-to-blob SAS URL for a LARGE drawing
     POST /api/drawings/<jobId>/process  -- process a drawing already uploaded via the SAS above
     GET  /api/drawings/<jobId>          -- re-fetch a previously computed result
+    GET  /api/health                   -- unauthenticated liveness check
 
 Why two upload paths: Vercel Functions cap request/response bodies at 4.5MB (platform limit, not
 configurable) -- see https://vercel.com/docs/functions/limitations#request-body-size. Real
-multi-page ballooned drawings routinely exceed that. function_app.py (Azure) has no such limit and
-only needs the one multipart endpoint; this file adds the SAS-based path specifically to work
-around Vercel's cap by never routing the file's bytes through this function at all -- the browser
-uploads directly to Blob Storage, and this app only ever sees a blob path reference.
+multi-page ballooned drawings routinely exceed that. The SAS-based path works around the cap by
+never routing the file's bytes through this function at all -- the browser uploads directly to
+Blob Storage, and this app only ever sees a blob path reference.
 
-Auth: Azure Functions' AuthLevel.FUNCTION has no Vercel equivalent -- there is no host-level gate
-here, so this app enforces its own shared-secret header (API_ACCESS_KEY / x-api-key) to avoid
-*regressing* the (already weak, POC-only) security posture function_app.py had. See
-deployment-vercel.md §3 for why this exists and what it explicitly is not.
+Azure is still used for two *services* -- Document Intelligence (layout/OCR) and Storage (Blob for
+files, Table for job records) -- but nothing here runs on Azure compute. Claude (Anthropic Messages
+API) does the structured extraction.
+
+Auth: there is no platform-level gate in front of a Vercel Function, so this app enforces its own
+shared-secret header (API_ACCESS_KEY / x-api-key) on every route except /api/health. That is
+POC-grade only -- see deployment-vercel.md §3 for what it explicitly is not.
+
+Run locally with `python app.py` (or `flask --app app run --port 8000`); .env is loaded below.
 """
 from __future__ import annotations
 
@@ -34,7 +38,12 @@ from datetime import datetime, timezone
 from functools import wraps
 
 from azure.storage.blob import BlobServiceClient
+from dotenv import load_dotenv
 from flask import Flask, Response, jsonify, request
+
+# Local dev convenience: reads .env from the project root if present. On Vercel there is no .env
+# file (env vars come from the project settings), so this is a no-op there.
+load_dotenv()
 
 from src.config import Settings
 from src.exceptions import (
@@ -57,9 +66,10 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# CORS: unlike Azure Functions (managed via `az functionapp cors add`), Vercel has no built-in
-# per-function CORS gate -- handled here instead. Restrict to your actual frontend origin(s) in
-# production; "*" is a POC-only default, same spirit as the missing user auth (see module docstring).
+# CORS: Vercel has no built-in per-function CORS gate -- handled here instead. Set
+# CORS_ALLOWED_ORIGIN to your actual frontend origin before sharing a live URL; "*" is a POC-only
+# default, same spirit as the missing user auth (see module docstring). The "*" default is also
+# what makes `npm run dev` on localhost:5173 able to call a locally-running backend.
 ALLOWED_ORIGIN = os.environ.get("CORS_ALLOWED_ORIGIN", "*")
 
 
@@ -72,11 +82,10 @@ def _add_cors_headers(response: Response) -> Response:
 
 
 def _require_api_key(fn):
-    """Vercel has no equivalent of Azure Functions' AuthLevel.FUNCTION host-level gate, so this
-    app enforces its own shared-secret header. API_ACCESS_KEY is deliberately NOT optional here
-    (unlike most Settings fields, it's checked eagerly per-request, not just at cold start) --
-    an unset key means every request 500s with a clear reason rather than the endpoint silently
-    running wide open."""
+    """Nothing gates a Vercel Function at the platform level, so this app enforces its own
+    shared-secret header. API_ACCESS_KEY is deliberately NOT optional here (unlike most Settings
+    fields, it's checked eagerly per-request, not just at cold start) -- an unset key means every
+    request 500s with a clear reason rather than the endpoint silently running wide open."""
 
     @wraps(fn)
     def wrapper(*args, **kwargs):
@@ -262,3 +271,10 @@ def health():
     """Unauthenticated liveness check -- deliberately outside _require_api_key so uptime
     monitoring doesn't need the shared secret. Reveals nothing but "the process is up"."""
     return jsonify({"status": "ok"}), 200
+
+
+if __name__ == "__main__":
+    # Local development only. Vercel imports the `app` object above and serves it itself, so this
+    # block never runs in a deployment. Debug is off deliberately: the reloader double-imports
+    # this module, which doubles cold-start cost for no benefit on a request-per-minute POC.
+    app.run(host="127.0.0.1", port=int(os.environ.get("PORT", "8000")))

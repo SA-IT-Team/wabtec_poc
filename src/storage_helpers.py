@@ -1,7 +1,7 @@
-"""Blob Storage helpers shared by every HTTP entry point (Azure Functions' function_app.py and
-Vercel's app.py) so upload/export logic can't drift between hosts.
+"""Blob Storage helpers used by app.py's routes, kept out of the HTTP layer so upload/export
+logic stays testable on its own.
 
-Deliberately host-agnostic: nothing here imports azure.functions or flask.
+Deliberately transport-agnostic: nothing here imports flask.
 """
 from __future__ import annotations
 
@@ -64,8 +64,8 @@ def generate_upload_sas(
     expiry_hours: int = 1,
 ) -> str:
     """A write-only SAS URL the *client* uploads directly to, bypassing app.py entirely for the
-    file payload. Exists specifically because Vercel caps request bodies at 4.5MB (see app.py's
-    module docstring) -- function_app.py (Azure) has no such limit and doesn't need this."""
+    file payload. Exists specifically because Vercel caps request bodies at 4.5MB -- see app.py's
+    module docstring."""
     get_container(blob_service, container_name)  # ensure it exists before handing out a SAS to it
     blob_client = blob_service.get_blob_client(container=container_name, blob=blob_name)
     sas_token = generate_blob_sas(

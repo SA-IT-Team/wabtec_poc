@@ -4,7 +4,6 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
-local.settings.json
 .env
 .env.local
 .vercel/

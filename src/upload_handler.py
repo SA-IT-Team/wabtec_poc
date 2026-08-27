@@ -17,10 +17,9 @@ MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024
 
 
 def validate_file(file_bytes: bytes, content_type: str) -> None:
-    """Shared by both upload paths: function_app.py's/app.py's direct multipart upload, and
-    app.py's blob-first flow (process_drawing validates *after* reading the blob back, since
-    Vercel's 4.5MB request body cap means the bytes never pass through app.py on the way in --
-    see app.py's module docstring)."""
+    """Shared by both upload paths: the direct multipart upload, and the blob-first flow
+    (process_drawing validates *after* reading the blob back, since Vercel's 4.5MB request body cap
+    means the bytes never pass through app.py on the way in -- see app.py's module docstring)."""
     if content_type not in SUPPORTED_CONTENT_TYPES:
         raise ValidationError(
             f"Unsupported content type '{content_type}'. Supported: application/pdf, "

@@ -22,7 +22,7 @@ class IJobStore(ABC):
 
 
 class InMemoryJobStore(IJobStore):
-    """Used by tests and by a `func start` run against Azurite without Table Storage configured."""
+    """Used by tests, and available for a local run without a real Table Storage account."""
 
     def __init__(self):
         self._jobs: dict[str, JobRecord] = {}

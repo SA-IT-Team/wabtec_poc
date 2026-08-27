@@ -1,5 +1,5 @@
 """Integration tests: wire DrawingPreprocessor -> BalloonDetector -> ExtractionOrchestrator ->
-ToleranceNormalizer -> ExcelWriter together exactly as function_app.py does, using Fake* Azure
+ToleranceNormalizer -> ExcelWriter together exactly as app.py does, using Fake* Azure
 clients (no network calls) so the whole pipeline is exercised end-to-end in-process.
 """
 from __future__ import annotations

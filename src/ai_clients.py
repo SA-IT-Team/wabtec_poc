@@ -153,7 +153,9 @@ class ClaudeChatClient(IChatCompletionClient):
             response = self._client.messages.create(
                 model=self._model,
                 max_tokens=self._max_tokens,
-                temperature=0,
+                # No temperature: sampling params (temperature/top_p/top_k) were removed on
+                # Sonnet 5 / Opus 5 / Opus 4.7+ -- the SDK rejects the kwarg outright. Determinism
+                # is no longer tunable here; forced tool use is what keeps the output structured.
                 system=SYSTEM_PROMPT,
                 tools=[
                     {

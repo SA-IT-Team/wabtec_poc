@@ -1,6 +1,6 @@
 """Domain exceptions for the ballooned-drawing extraction POC.
 
-Mapped to HTTP status codes at the Azure Function boundary (see function_app.py) and to the
+Mapped to HTTP status codes at the HTTP boundary (see app.py's _map_pipeline_error) and to the
 error-handling table in architecture-poc.md §2.3.
 """
 
