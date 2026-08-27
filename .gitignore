@@ -5,3 +5,6 @@ __pycache__/
 .coverage
 htmlcov/
 local.settings.json
+.env
+.env.local
+.vercel/

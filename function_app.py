@@ -11,15 +11,11 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import azure.functions as func
-from azure.storage.blob import BlobSasPermissions, BlobServiceClient, generate_blob_sas
 
-from src.ai_clients import AzureDocumentIntelligenceClient, ClaudeChatClient
-from src.balloon_detector import BalloonDetector
 from src.config import Settings
-from src.excel_writer import ExcelWriter
 from src.exceptions import (
     ExtractionServiceError,
     JobNotFoundError,
@@ -28,12 +24,11 @@ from src.exceptions import (
     UnsupportedFileTypeError,
     ValidationError,
 )
-from src.extraction_orchestrator import ExtractionOrchestrator, VisionGroundedExtractionStrategy
 from src.job_store import TableStorageJobStore
 from src.models import JobStatus
 from src.pipeline import ExtractionPipeline, PipelineContext
-from src.preprocessor import DrawingPreprocessor
-from src.tolerance_normalizer import ToleranceNormalizer
+from src.pipeline_factory import build_pipeline
+from src.storage_helpers import get_container, write_export_and_get_sas
 from src.upload_handler import UploadHandler
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
@@ -42,67 +37,6 @@ logger = logging.getLogger(__name__)
 
 def _json_response(payload: dict, status: int) -> func.HttpResponse:
     return func.HttpResponse(json.dumps(payload, default=str), status_code=status, mimetype="application/json")
-
-
-def _build_pipeline(settings: Settings) -> tuple[ExtractionPipeline, TableStorageJobStore, BlobServiceClient]:
-    di_client = AzureDocumentIntelligenceClient(settings.doc_intelligence_endpoint, settings.doc_intelligence_key)
-    chat_client = ClaudeChatClient(
-        settings.claude_api_key,
-        settings.claude_model,
-        settings.claude_max_tokens,
-        settings.claude_api_base_url,
-    )
-    pipeline = ExtractionPipeline(
-        preprocessor=DrawingPreprocessor(
-            target_dpi=settings.target_dpi, min_dpi=settings.min_dpi, max_pages=settings.max_pages
-        ),
-        balloon_detector=BalloonDetector(di_client),
-        orchestrator=ExtractionOrchestrator(VisionGroundedExtractionStrategy(chat_client)),
-        normalizer=ToleranceNormalizer(),
-        excel_writer=ExcelWriter(),
-    )
-    job_store = TableStorageJobStore(settings.storage_connection_string)
-    blob_service = BlobServiceClient.from_connection_string(settings.storage_connection_string)
-    return pipeline, job_store, blob_service
-
-
-class _ContainerAdapter:
-    """Adapts a BlobContainerClient to the small `upload_blob(name, data, overwrite)` shape
-    UploadHandler depends on (dependency inversion, keeps UploadHandler SDK-agnostic for tests)."""
-
-    def __init__(self, client):
-        self._client = client
-
-    def upload_blob(self, blob_name: str, data: bytes, overwrite: bool = True) -> None:
-        self._client.upload_blob(name=blob_name, data=data, overwrite=overwrite)
-
-
-def _container(blob_service: BlobServiceClient, name: str) -> _ContainerAdapter:
-    client = blob_service.get_container_client(name)
-    if not client.exists():
-        client.create_container()
-    return _ContainerAdapter(client)
-
-
-def _parse_account_key(connection_string: str) -> str:
-    parts = dict(p.split("=", 1) for p in connection_string.split(";") if "=" in p)
-    return parts["AccountKey"]
-
-
-def _write_export_and_get_sas(blob_service: BlobServiceClient, job_id: str, excel_bytes: bytes, settings: Settings) -> str:
-    blob_name = f"{job_id}/characteristics.xlsx"
-    _container(blob_service, "exports").upload_blob(blob_name, excel_bytes, overwrite=True)
-
-    blob_client = blob_service.get_blob_client(container="exports", blob=blob_name)
-    sas_token = generate_blob_sas(
-        account_name=blob_service.account_name,
-        container_name="exports",
-        blob_name=blob_name,
-        account_key=_parse_account_key(settings.storage_connection_string),
-        permission=BlobSasPermissions(read=True),
-        expiry=datetime.now(timezone.utc) + timedelta(hours=1),
-    )
-    return f"{blob_client.url}?{sas_token}"
 
 
 @app.route(route="drawings/extract", methods=["POST"])
@@ -121,14 +55,14 @@ def extract_drawing(req: func.HttpRequest) -> func.HttpResponse:
     content_type = uploaded.content_type or "application/octet-stream"
 
     try:
-        pipeline, job_store, blob_service = _build_pipeline(settings)
-        upload_handler = UploadHandler(lambda name: _container(blob_service, name), job_store)
+        pipeline, job_store, blob_service = build_pipeline(settings)
+        upload_handler = UploadHandler(lambda name: get_container(blob_service, name), job_store)
         job = upload_handler.handle_upload(file_bytes=file_bytes, file_name=uploaded.filename, content_type=content_type)
 
         ctx = PipelineContext(job=job, file_bytes=file_bytes, content_type=content_type)
         ctx = pipeline.run(ctx)
 
-        export_url = _write_export_and_get_sas(blob_service, job.job_id, ctx.excel_bytes, settings)
+        export_url = write_export_and_get_sas(blob_service, job.job_id, ctx.excel_bytes, settings.storage_connection_string)
 
         job.status = JobStatus.COMPLETE
         job.balloon_count_detected = ctx.balloon_count_detected

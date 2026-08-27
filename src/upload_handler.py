@@ -16,6 +16,22 @@ SUPPORTED_CONTENT_TYPES = SUPPORTED_IMAGE_TYPES | {"application/pdf"}
 MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024
 
 
+def validate_file(file_bytes: bytes, content_type: str) -> None:
+    """Shared by both upload paths: function_app.py's/app.py's direct multipart upload, and
+    app.py's blob-first flow (process_drawing validates *after* reading the blob back, since
+    Vercel's 4.5MB request body cap means the bytes never pass through app.py on the way in --
+    see app.py's module docstring)."""
+    if content_type not in SUPPORTED_CONTENT_TYPES:
+        raise ValidationError(
+            f"Unsupported content type '{content_type}'. Supported: application/pdf, "
+            f"{', '.join(sorted(SUPPORTED_IMAGE_TYPES))}."
+        )
+    if not file_bytes:
+        raise ValidationError("Uploaded file is empty.")
+    if len(file_bytes) > MAX_FILE_SIZE_BYTES:
+        raise ValidationError(f"File exceeds the maximum size of {MAX_FILE_SIZE_BYTES} bytes.")
+
+
 class BlobContainer(Protocol):
     def upload_blob(self, blob_name: str, data: bytes, overwrite: bool = True) -> None: ...
 
@@ -29,7 +45,7 @@ class UploadHandler:
         self._job_store = job_store
 
     def handle_upload(self, *, file_bytes: bytes, file_name: str, content_type: str) -> JobRecord:
-        self._validate(file_bytes, content_type)
+        validate_file(file_bytes, content_type)
         job_id = str(uuid.uuid4())
         self._store_source_blob(job_id, file_bytes, file_name)
 
@@ -41,18 +57,6 @@ class UploadHandler:
         )
         self._job_store.create(job)
         return job
-
-    @staticmethod
-    def _validate(file_bytes: bytes, content_type: str) -> None:
-        if content_type not in SUPPORTED_CONTENT_TYPES:
-            raise ValidationError(
-                f"Unsupported content type '{content_type}'. Supported: application/pdf, "
-                f"{', '.join(sorted(SUPPORTED_IMAGE_TYPES))}."
-            )
-        if not file_bytes:
-            raise ValidationError("Uploaded file is empty.")
-        if len(file_bytes) > MAX_FILE_SIZE_BYTES:
-            raise ValidationError(f"File exceeds the maximum size of {MAX_FILE_SIZE_BYTES} bytes.")
 
     def _store_source_blob(self, job_id: str, file_bytes: bytes, file_name: str) -> None:
         container = self._blob_container_factory("raw-drawings")
