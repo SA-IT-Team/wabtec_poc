@@ -26,15 +26,16 @@ class PageLimitExceededError(ValidationError):
 
 
 class ExtractionServiceError(BdxError):
-    """Base class for failures in an upstream Azure AI service. Maps to HTTP 502."""
+    """Base class for failures in an upstream AI service (Azure Document Intelligence or Claude).
+    Maps to HTTP 502."""
 
 
 class DocumentIntelligenceError(ExtractionServiceError):
     """Raised when Azure AI Document Intelligence fails after retries."""
 
 
-class AzureOpenAIError(ExtractionServiceError):
-    """Raised when Azure OpenAI fails after retries."""
+class ClaudeApiError(ExtractionServiceError):
+    """Raised when the Claude (Anthropic) API fails after retries."""
 
 
 class SchemaValidationError(ExtractionServiceError):

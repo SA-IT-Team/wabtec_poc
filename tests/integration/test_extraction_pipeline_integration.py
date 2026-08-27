@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 
 from openpyxl import load_workbook
 
-from src.azure_clients import FakeChatCompletionClient, FakeDocumentAnalysisClient
+from src.ai_clients import FakeChatCompletionClient, FakeDocumentAnalysisClient
 from src.balloon_detector import BalloonDetector
 from src.excel_writer import ExcelWriter
 from src.exceptions import DocumentIntelligenceError

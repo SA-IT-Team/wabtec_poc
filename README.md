@@ -1,33 +1,38 @@
 # Ballooned Drawing Extraction — POC
 
-Implements [`architecture-poc.md`](../architecture-poc.md): a single Azure Function App that
-validates whether Azure AI Document Intelligence + Azure OpenAI can reliably read balloon numbers,
+Implements [`doc/architecture-poc.md`](doc/architecture-poc.md): a single Azure Function App that
+validates whether Azure AI Document Intelligence + Claude can reliably read balloon numbers,
 dimensions, tolerances, and GD&T off real ballooned drawings. No auth, no reconciliation gate —
 see that document's §5 for exactly what this build does and does not prove.
+
+> **Provider note:** the original design used Azure OpenAI for the structured extraction call;
+> this build uses **Claude (Anthropic Messages API)** instead — Document Intelligence remains on
+> Azure for layout/OCR. `doc/architecture-poc.md` still describes the Azure OpenAI version and has
+> not been updated to match; treat this README, `deployment.md`, and the code itself as current.
 
 ## Project layout
 
 ```
-poc/
+wabtec_poc/
   function_app.py          # Azure Functions v2 HTTP triggers (the only entry point)
   src/
     config.py               # env-var settings
     exceptions.py            # domain error types -> HTTP status mapping
-    models.py                 # pydantic models (also double as the AOAI structured-output schema)
+    models.py                 # pydantic models (also double as the Claude tool input_schema)
     preprocessor.py            # PDF/image -> page raster images, DPI/page-count validation
     balloon_detector.py         # Document Intelligence layout call -> balloon candidates
-    extraction_orchestrator.py  # Azure OpenAI structured extraction + repair loop
+    extraction_orchestrator.py  # Claude structured extraction (forced tool use) + repair loop
     tolerance_normalizer.py     # normalizes tolerance notation
     excel_writer.py              # template-driven .xlsx generation
     job_store.py                  # Table Storage (+ in-memory) job records
     upload_handler.py              # upload validation + blob storage
-    azure_clients.py                # Adapter pattern over the Azure SDKs (+ Fake* test doubles)
+    ai_clients.py                   # Adapter pattern over Document Intelligence + Claude (+ Fake* test doubles)
     pipeline.py                      # Pipeline pattern wiring every stage together
     retry.py                          # shared retry/backoff policy
   tests/
-    unit/            # one file per module, Azure SDKs never touched
+    unit/            # one file per module, no real Azure/Claude credentials touched
     integration/      # full pipeline wired with Fake* clients, no network calls
-    fixtures/           # canned Document Intelligence layout + AOAI extraction JSON
+    fixtures/           # canned Document Intelligence layout + extraction JSON
 ```
 
 ## Local setup
@@ -45,11 +50,11 @@ pytest -q                                    # 34 tests, no Azure credentials re
 pytest -q --cov=src --cov-report=term-missing  # coverage report
 ```
 
-Every unit and integration test runs against `Fake*` implementations of the Azure clients
-(`src/azure_clients.py`) — no network calls, no credentials needed. The only untested code paths
-are the *real* SDK-backed classes (`AzureDocumentIntelligenceClient`, `AzureOpenAIChatClient`,
-`TableStorageJobStore`) and `config.py`'s env-var loading, which need live Azure resources —
-exercise those via a real `func start` run (below) or a manual smoke test against your resource group.
+Every unit and integration test runs against `Fake*` implementations of the AI clients
+(`src/ai_clients.py`) — no network calls, no credentials needed. The only untested code paths
+are the *real* SDK-backed classes (`AzureDocumentIntelligenceClient`, `ClaudeChatClient`,
+`TableStorageJobStore`) and `config.py`'s env-var loading, which need live Azure/Anthropic
+credentials — exercise those via a real `func start` run (below) or a manual smoke test.
 
 ## Running the Function App locally
 
@@ -59,7 +64,8 @@ Storage account) for `AzureWebJobsStorage`.
 
 ```bash
 cp local.settings.json.example local.settings.json
-# fill in DOCUMENT_INTELLIGENCE_* and AZURE_OPENAI_* with your resource values
+# fill in DOCUMENT_INTELLIGENCE_* with your Azure resource values, and CLAUDE_API_KEY with a
+# key from console.anthropic.com
 azurite &                # if using local storage emulation
 func start
 ```

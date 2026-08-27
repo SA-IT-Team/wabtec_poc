@@ -1,5 +1,5 @@
-from src.azure_clients import FakeChatCompletionClient
-from src.exceptions import AzureOpenAIError
+from src.ai_clients import FakeChatCompletionClient
+from src.exceptions import ClaudeApiError
 from src.extraction_orchestrator import ExtractionOrchestrator, VisionGroundedExtractionStrategy
 from src.preprocessor import PageImage
 
@@ -53,13 +53,13 @@ def test_gives_up_after_max_repair_attempts_and_falls_back_to_detected_candidate
 
 
 def test_transport_failure_propagates_immediately_without_repair(sample_layout):
-    chat_client = FakeChatCompletionClient([AzureOpenAIError("service unavailable")])
+    chat_client = FakeChatCompletionClient([ClaudeApiError("service unavailable")])
     orchestrator = ExtractionOrchestrator(VisionGroundedExtractionStrategy(chat_client, max_repair_attempts=2))
 
     try:
         orchestrator.extract_page(_page(), sample_layout, [])
-        assert False, "expected AzureOpenAIError to propagate"
-    except AzureOpenAIError:
+        assert False, "expected ClaudeApiError to propagate"
+    except ClaudeApiError:
         pass
 
     assert len(chat_client.calls) == 1  # no repair retries for a transport failure

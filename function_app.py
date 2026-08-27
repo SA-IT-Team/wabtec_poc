@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 import azure.functions as func
 from azure.storage.blob import BlobSasPermissions, BlobServiceClient, generate_blob_sas
 
-from src.azure_clients import AzureDocumentIntelligenceClient, AzureOpenAIChatClient
+from src.ai_clients import AzureDocumentIntelligenceClient, ClaudeChatClient
 from src.balloon_detector import BalloonDetector
 from src.config import Settings
 from src.excel_writer import ExcelWriter
@@ -46,11 +46,11 @@ def _json_response(payload: dict, status: int) -> func.HttpResponse:
 
 def _build_pipeline(settings: Settings) -> tuple[ExtractionPipeline, TableStorageJobStore, BlobServiceClient]:
     di_client = AzureDocumentIntelligenceClient(settings.doc_intelligence_endpoint, settings.doc_intelligence_key)
-    chat_client = AzureOpenAIChatClient(
-        settings.azure_openai_endpoint,
-        settings.azure_openai_key,
-        settings.azure_openai_deployment,
-        settings.azure_openai_api_version,
+    chat_client = ClaudeChatClient(
+        settings.claude_api_key,
+        settings.claude_model,
+        settings.claude_max_tokens,
+        settings.claude_api_base_url,
     )
     pipeline = ExtractionPipeline(
         preprocessor=DrawingPreprocessor(

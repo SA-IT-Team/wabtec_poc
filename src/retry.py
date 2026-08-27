@@ -1,7 +1,8 @@
-"""Shared retry policy for outbound Azure SDK calls.
+"""Shared retry policy for outbound calls to external AI services (Azure Document Intelligence,
+Claude/Anthropic).
 
 architecture-poc.md §2.2: "Retry with exponential backoff -- wraps both the Document Intelligence
-and Azure OpenAI SDK calls for 429/503 responses; 3 attempts, base 2s, jittered."
+and [chat completion] SDK calls for 429/503 responses; 3 attempts, base 2s, jittered."
 """
 from __future__ import annotations
 
@@ -10,7 +11,7 @@ from typing import Type
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential_jitter
 
 
-def azure_retry(exception_types: tuple[Type[BaseException], ...]):
+def external_api_retry(exception_types: tuple[Type[BaseException], ...]):
     """Returns a tenacity decorator: 3 attempts, exponential backoff from 2s, jittered.
 
     Only retries on the given exception types (typically transient upstream errors); anything

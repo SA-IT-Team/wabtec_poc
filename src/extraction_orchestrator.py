@@ -1,10 +1,11 @@
 """ExtractionOrchestrator + IExtractionStrategy (Strategy pattern, architecture-poc.md §2.2).
 
 VisionGroundedExtractionStrategy sends the page image plus the Document Intelligence text layer to
-Azure OpenAI and validates the response against BalloonExtractionResponse. On a malformed/non-schema
-response it does one repair re-prompt; if that also fails it returns an empty list rather than
-raising, so the orchestrator can still emit a row for every detected candidate (FR-10: a balloon
-Document Intelligence found on the page must never simply vanish from the output).
+Claude (via forced tool use, see src/ai_clients.py) and validates the response against
+BalloonExtractionResponse. On a malformed/non-schema response it does one repair re-prompt; if that
+also fails it returns an empty list rather than raising, so the orchestrator can still emit a row
+for every detected candidate (FR-10: a balloon Document Intelligence found on the page must never
+simply vanish from the output).
 """
 from __future__ import annotations
 
@@ -14,8 +15,8 @@ from typing import Any
 
 from pydantic import ValidationError as PydanticValidationError
 
-from src.azure_clients import IChatCompletionClient, decode_image_b64
-from src.exceptions import AzureOpenAIError
+from src.ai_clients import IChatCompletionClient, decode_image_b64
+from src.exceptions import ClaudeApiError
 from src.models import BalloonExtractionResponse, ExtractedBalloon
 from src.preprocessor import PageImage
 
@@ -29,7 +30,7 @@ class IExtractionStrategy(ABC):
     def extract(self, page: PageImage, layout_text: str) -> list[ExtractedBalloon]:
         """Returns whatever balloons the model was able to extract for this page (may be an empty
         list on unrecoverable failure -- never raises for a *content* problem, only propagates
-        AzureOpenAIError for a transport/API failure)."""
+        ClaudeApiError for a transport/API failure)."""
 
 
 class VisionGroundedExtractionStrategy(IExtractionStrategy):
@@ -52,7 +53,7 @@ class VisionGroundedExtractionStrategy(IExtractionStrategy):
                 )
                 parsed = BalloonExtractionResponse.model_validate(raw)
                 return parsed.balloons
-            except AzureOpenAIError:
+            except ClaudeApiError:
                 raise  # transport/API failure -- not something a repair re-prompt can fix
             except (PydanticValidationError, TypeError, KeyError) as exc:
                 last_error = exc

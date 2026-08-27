@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from src.azure_clients import IDocumentAnalysisClient
+from src.ai_clients import IDocumentAnalysisClient
 from src.exceptions import DocumentIntelligenceError
 from src.preprocessor import PageImage
 

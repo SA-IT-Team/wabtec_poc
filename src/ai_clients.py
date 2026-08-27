@@ -1,17 +1,21 @@
-"""Adapter pattern (architecture-poc.md §2.2): thin wrappers around the Azure SDKs behind small
-interfaces, so ExtractionOrchestrator / BalloonDetector never import the SDKs directly and unit
-tests can substitute Fake* implementations with no network calls.
+"""Adapter pattern (architecture-poc.md §2.2): thin wrappers around the underlying AI service SDKs
+behind small interfaces, so ExtractionOrchestrator / BalloonDetector never import an SDK directly
+and unit tests can substitute Fake* implementations with no network calls.
+
+Two providers, two different clouds: Document Intelligence stays on Azure (balloon-region OCR/
+layout); the structured dimension/tolerance/GD&T extraction call goes to Claude via Anthropic's
+Messages API (see ClaudeChatClient below) -- this file's name is deliberately provider-neutral
+rather than "azure_clients" for that reason.
 """
 from __future__ import annotations
 
 import base64
-import json
 import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
-from src.exceptions import AzureOpenAIError, DocumentIntelligenceError
-from src.retry import azure_retry
+from src.exceptions import ClaudeApiError, DocumentIntelligenceError
+from src.retry import external_api_retry
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +43,7 @@ class AzureDocumentIntelligenceClient(IDocumentAnalysisClient):
 
         self._client = DocumentIntelligenceClient(endpoint=endpoint, credential=AzureKeyCredential(api_key))
 
-    @azure_retry((Exception,))
+    @external_api_retry((Exception,))
     def analyze_layout(self, image_bytes: bytes) -> dict[str, Any]:
         try:
             poller = self._client.begin_analyze_document(
@@ -89,7 +93,7 @@ class FakeDocumentAnalysisClient(IDocumentAnalysisClient):
 
 
 # --------------------------------------------------------------------------------------
-# Azure OpenAI
+# Claude (Anthropic Messages API)
 # --------------------------------------------------------------------------------------
 
 SYSTEM_PROMPT = (
@@ -101,12 +105,16 @@ SYSTEM_PROMPT = (
     "null and lower your confidence for that field."
 )
 
+# Name of the tool Claude is forced to call so its reply is structured JSON rather than prose --
+# see ClaudeChatClient.extract_balloons.
+EXTRACTION_TOOL_NAME = "record_balloon_extraction"
+
 
 def build_user_prompt(layout_text: str, page_number: int) -> str:
     return (
         f"Page {page_number}. Text extracted by layout analysis (for grounding, may be incomplete):\n"
         f"---\n{layout_text}\n---\n"
-        "Return every balloon on this page as structured JSON matching the provided schema."
+        f"Call the {EXTRACTION_TOOL_NAME} tool with every balloon on this page."
     )
 
 
@@ -115,51 +123,71 @@ class IChatCompletionClient(ABC):
     def extract_balloons(
         self, *, image_b64: str, layout_text: str, page_number: int, json_schema: dict[str, Any]
     ) -> dict[str, Any]:
-        """Returns a dict matching BalloonExtractionResponse's schema (raises AzureOpenAIError on
+        """Returns a dict matching BalloonExtractionResponse's schema (raises ClaudeApiError on
         transport/API failure; may return content that does NOT validate -- caller is responsible
         for schema validation/repair, see extraction_orchestrator.py)."""
 
 
-class AzureOpenAIChatClient(IChatCompletionClient):
-    """Real implementation using Azure OpenAI structured outputs (response_format=json_schema)."""
+class ClaudeChatClient(IChatCompletionClient):
+    """Real implementation backed by Claude's Messages API (Anthropic Python SDK).
 
-    def __init__(self, endpoint: str, api_key: str, deployment: str, api_version: str):
-        from openai import AzureOpenAI
+    Structured output is obtained via forced tool use rather than a `response_format` parameter
+    (Claude has no direct equivalent) -- the extraction schema is registered as a single tool's
+    `input_schema` and `tool_choice` forces Claude to call it, so `content` always contains a
+    `tool_use` block whose `.input` is already a parsed dict (no json.loads needed, unlike the
+    OpenAI-style `message.content` string this replaced).
+    """
 
-        self._client = AzureOpenAI(azure_endpoint=endpoint, api_key=api_key, api_version=api_version)
-        self._deployment = deployment
+    def __init__(self, api_key: str, model: str, max_tokens: int = 4096, base_url: str | None = None):
+        from anthropic import Anthropic
 
-    @azure_retry((Exception,))
+        self._client = Anthropic(api_key=api_key, base_url=base_url) if base_url else Anthropic(api_key=api_key)
+        self._model = model
+        self._max_tokens = max_tokens
+
+    @external_api_retry((Exception,))
     def extract_balloons(
         self, *, image_b64: str, layout_text: str, page_number: int, json_schema: dict[str, Any]
     ) -> dict[str, Any]:
         try:
-            response = self._client.chat.completions.create(
-                model=self._deployment,
+            response = self._client.messages.create(
+                model=self._model,
+                max_tokens=self._max_tokens,
                 temperature=0,
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {"name": "balloon_extraction", "schema": json_schema, "strict": True},
-                },
+                system=SYSTEM_PROMPT,
+                tools=[
+                    {
+                        "name": EXTRACTION_TOOL_NAME,
+                        "description": "Records the structured balloon extraction result for one drawing page.",
+                        "input_schema": json_schema,
+                    }
+                ],
+                tool_choice={"type": "tool", "name": EXTRACTION_TOOL_NAME},
                 messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
                     {
                         "role": "user",
                         "content": [
                             {"type": "text", "text": build_user_prompt(layout_text, page_number)},
-                            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}},
+                            {
+                                "type": "image",
+                                "source": {"type": "base64", "media_type": "image/png", "data": image_b64},
+                            },
                         ],
-                    },
+                    }
                 ],
             )
-        except Exception as exc:  # noqa: BLE001
-            raise AzureOpenAIError(f"Azure OpenAI extraction call failed: {exc}") from exc
+        except Exception as exc:  # noqa: BLE001 - normalize every SDK failure to our own error type
+            raise ClaudeApiError(f"Claude extraction call failed: {exc}") from exc
 
-        content = response.choices[0].message.content
-        try:
-            return json.loads(content)
-        except (TypeError, json.JSONDecodeError) as exc:
-            raise AzureOpenAIError(f"Azure OpenAI returned non-JSON content: {exc}") from exc
+        tool_use = next((block for block in response.content if getattr(block, "type", None) == "tool_use"), None)
+        if tool_use is None:
+            # Not a transport failure -- Claude replied but didn't call the forced tool (e.g. hit
+            # max_tokens mid-call). Return an empty dict rather than raising: it fails
+            # BalloonExtractionResponse schema validation the same way a malformed OpenAI response
+            # used to, which routes it into the orchestrator's existing repair loop for free.
+            logger.warning("Claude response on page %d had no tool_use block (stop_reason=%s)", page_number, response.stop_reason)
+            return {}
+        return tool_use.input
 
 
 class FakeChatCompletionClient(IChatCompletionClient):
@@ -173,7 +201,7 @@ class FakeChatCompletionClient(IChatCompletionClient):
     def extract_balloons(self, **kwargs) -> dict:
         self.calls.append(kwargs)
         if not self._responses:
-            raise AzureOpenAIError("FakeChatCompletionClient: no more canned responses configured.")
+            raise ClaudeApiError("FakeChatCompletionClient: no more canned responses configured.")
         item = self._responses.pop(0)
         if isinstance(item, Exception):
             raise item

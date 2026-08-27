@@ -1,6 +1,6 @@
 import pytest
 
-from src.azure_clients import FakeDocumentAnalysisClient
+from src.ai_clients import FakeDocumentAnalysisClient
 from src.balloon_detector import BalloonDetector
 from src.exceptions import DocumentIntelligenceError
 from src.preprocessor import PageImage

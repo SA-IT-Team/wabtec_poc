@@ -11,10 +11,10 @@ class Settings:
     storage_connection_string: str
     doc_intelligence_endpoint: str
     doc_intelligence_key: str
-    azure_openai_endpoint: str
-    azure_openai_key: str
-    azure_openai_deployment: str
-    azure_openai_api_version: str = "2024-08-01-preview"
+    claude_api_key: str
+    claude_model: str
+    claude_max_tokens: int = 4096
+    claude_api_base_url: str | None = None  # optional: route through a proxy/gateway instead of api.anthropic.com
     target_dpi: int = 300
     min_dpi: int = 200
     max_pages: int = 10
@@ -31,10 +31,10 @@ class Settings:
             storage_connection_string=require("AzureWebJobsStorage"),
             doc_intelligence_endpoint=require("DOCUMENT_INTELLIGENCE_ENDPOINT"),
             doc_intelligence_key=require("DOCUMENT_INTELLIGENCE_KEY"),
-            azure_openai_endpoint=require("AZURE_OPENAI_ENDPOINT"),
-            azure_openai_key=require("AZURE_OPENAI_KEY"),
-            azure_openai_deployment=require("AZURE_OPENAI_DEPLOYMENT"),
-            azure_openai_api_version=os.environ.get("AZURE_OPENAI_API_VERSION", "2024-08-01-preview"),
+            claude_api_key=require("CLAUDE_API_KEY"),
+            claude_model=os.environ.get("CLAUDE_MODEL", "claude-sonnet-5"),
+            claude_max_tokens=int(os.environ.get("CLAUDE_MAX_TOKENS", "4096")),
+            claude_api_base_url=os.environ.get("CLAUDE_API_BASE_URL") or None,
             target_dpi=int(os.environ.get("TARGET_DPI", "300")),
             min_dpi=int(os.environ.get("MIN_DPI", "200")),
             max_pages=int(os.environ.get("MAX_PAGES", "10")),
