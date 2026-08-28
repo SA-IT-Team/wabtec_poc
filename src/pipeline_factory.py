@@ -7,6 +7,7 @@ from azure.storage.blob import BlobServiceClient
 
 from src.ai_clients import AzureDocumentIntelligenceClient, ClaudeChatClient
 from src.balloon_detector import BalloonDetector
+from src.chat_assistant import ChatAssistant
 from src.config import Settings
 from src.excel_writer import ExcelWriter
 from src.extraction_orchestrator import ExtractionOrchestrator, VisionGroundedExtractionStrategy
@@ -42,3 +43,13 @@ def build_pipeline(settings: Settings) -> tuple[ExtractionPipeline, TableStorage
 
 def build_reconciliation_service(settings: Settings) -> ReconciliationService:
     return ReconciliationService(BlobReconciliationStore(settings.storage_connection_string))
+
+
+def build_chat_assistant(settings: Settings) -> ChatAssistant:
+    chat_client = ClaudeChatClient(
+        settings.claude_api_key,
+        settings.claude_model,
+        settings.claude_max_tokens,
+        settings.claude_api_base_url,
+    )
+    return ChatAssistant(chat_client)

@@ -162,3 +162,53 @@ class ExtractionResult(BaseModel):
     balloons: list[ExtractedBalloon]
     export_url: Optional[str] = None
     reconciliation: Optional[ReconciliationStatus] = None
+
+
+# --------------------------------------------------------------------------------------
+# Chatbot analysis: the "general analysis" / feedback assistant requirements.md asks for --
+# missing information, incomplete data, inconsistencies between sheets, common mistakes. See
+# src/analysis_rules.py (deterministic checks) and src/chat_assistant.py (AI review + free chat).
+# --------------------------------------------------------------------------------------
+
+
+class AnalysisFindingCategory(str, Enum):
+    MISSING_INFO = "missing_info"  # a field that should have a value doesn't
+    INCOMPLETE_DATA = "incomplete_data"  # extraction failed, was blocked, or is low-confidence
+    INCONSISTENCY = "inconsistency"  # conflicting data within the drawing (e.g. across sheets)
+    COMMON_MISTAKE = "common_mistake"  # a recognizable authoring/extraction footgun, not a hard error
+
+
+class AnalysisFindingSeverity(str, Enum):
+    INFO = "info"
+    WARNING = "warning"
+    CRITICAL = "critical"
+
+
+class AnalysisFindingSource(str, Enum):
+    RULE = "rule"  # produced by src/analysis_rules.py -- deterministic, no API call, always reproducible
+    AI = "ai"  # produced by the Claude review pass -- see chat_assistant.py
+
+
+class BalloonRef(BaseModel):
+    page: int
+    balloon_number: int
+
+
+class AnalysisFinding(BaseModel):
+    category: AnalysisFindingCategory
+    severity: AnalysisFindingSeverity = AnalysisFindingSeverity.WARNING
+    summary: str
+    detail: str
+    balloon_refs: list[BalloonRef] = Field(default_factory=list)
+    source: AnalysisFindingSource = AnalysisFindingSource.RULE
+
+
+class AnalysisReport(BaseModel):
+    """Response body for POST /api/drawings/{jobId}/analyze -- the chatbot's structured feedback
+    pass over the current reconciliation state. Re-runnable at any point in review; always
+    reflects current state (including reviewer corrections), nothing is cached."""
+
+    job_id: str
+    generated_at: datetime
+    summary: str
+    findings: list[AnalysisFinding] = Field(default_factory=list)

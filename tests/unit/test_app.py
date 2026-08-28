@@ -12,7 +12,9 @@ from datetime import datetime, timezone
 import pytest
 
 import app as vercel_app
-from src.exceptions import DocumentIntelligenceError
+from src.ai_clients import FakeChatCompletionClient
+from src.chat_assistant import ChatAssistant
+from src.exceptions import ClaudeApiError, DocumentIntelligenceError
 from src.job_store import InMemoryJobStore
 from src.models import ExtractedBalloon, JobRecord, JobStatus
 from src.reconciliation import ReconciliationService
@@ -433,3 +435,119 @@ def test_signoff_403s_when_signer_is_the_submitter(client, monkeypatch):
 
     assert resp.status_code == 403
     assert resp.json["error"] == "SegregationOfDutiesViolation"
+
+
+# ---------------------------------------------------------------------------------------
+# AI chatbot: general analysis + feedback -- src/chat_assistant.py, over HTTP
+# ---------------------------------------------------------------------------------------
+
+
+def _patch_chat_assistant(monkeypatch, chat_client: FakeChatCompletionClient) -> None:
+    monkeypatch.setattr(vercel_app, "build_chat_assistant", lambda settings: ChatAssistant(chat_client))
+
+
+def test_analyze_returns_report_for_a_reconciled_job(client, monkeypatch):
+    job_id = _seed_extracted_job(client, monkeypatch)
+    fake = FakeChatCompletionClient(
+        canned_structured=[
+            {
+                "summary": "One balloon, looks fine.",
+                "findings": [
+                    {"category": "missing_info", "severity": "info", "summary": "n/a", "detail": "n/a", "balloon_refs": []}
+                ],
+            }
+        ]
+    )
+    _patch_chat_assistant(monkeypatch, fake)
+
+    resp = client.post(f"/api/drawings/{job_id}/analyze", headers={"x-api-key": "test-shared-secret"})
+
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["job_id"] == job_id
+    assert body["summary"] == "One balloon, looks fine."
+    assert len(body["findings"]) == 1
+
+
+def test_analyze_404s_for_unknown_job(client, monkeypatch):
+    _patch_reconciliation(monkeypatch)
+    _patch_chat_assistant(monkeypatch, FakeChatCompletionClient())
+
+    resp = client.post("/api/drawings/does-not-exist/analyze", headers={"x-api-key": "test-shared-secret"})
+
+    assert resp.status_code == 404
+    assert resp.json["error"] == "NotFound"
+
+
+def test_analyze_maps_claude_failure_to_502(client, monkeypatch):
+    job_id = _seed_extracted_job(client, monkeypatch)
+    _patch_chat_assistant(monkeypatch, FakeChatCompletionClient(canned_structured=[ClaudeApiError("upstream 503")]))
+
+    resp = client.post(f"/api/drawings/{job_id}/analyze", headers={"x-api-key": "test-shared-secret"})
+
+    # ChatAssistant.analyze catches ClaudeApiError itself and returns a rule-only report -- the
+    # endpoint should not 502 here, unlike chat, which has no such fallback.
+    assert resp.status_code == 200
+    assert "AI review pass failed" in resp.get_json()["summary"]
+
+
+def test_chat_requires_a_non_empty_message(client, monkeypatch):
+    job_id = _seed_extracted_job(client, monkeypatch)
+    _patch_chat_assistant(monkeypatch, FakeChatCompletionClient())
+
+    resp = client.post(f"/api/drawings/{job_id}/chat", json={"message": "  "}, headers={"x-api-key": "test-shared-secret"})
+
+    assert resp.status_code == 400
+    assert resp.json["error"] == "ValidationError"
+
+
+def test_chat_returns_reply_for_a_valid_question(client, monkeypatch):
+    job_id = _seed_extracted_job(client, monkeypatch)
+    _patch_chat_assistant(monkeypatch, FakeChatCompletionClient(canned_text=["Balloon 1 is 25.4mm."]))
+
+    resp = client.post(
+        f"/api/drawings/{job_id}/chat",
+        json={"message": "What's balloon 1's value?", "history": []},
+        headers={"x-api-key": "test-shared-secret"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.get_json()["reply"] == "Balloon 1 is 25.4mm."
+
+
+def test_chat_404s_for_unknown_job(client, monkeypatch):
+    _patch_reconciliation(monkeypatch)
+    _patch_chat_assistant(monkeypatch, FakeChatCompletionClient(canned_text=["ok"]))
+
+    resp = client.post(
+        "/api/drawings/does-not-exist/chat", json={"message": "hi"}, headers={"x-api-key": "test-shared-secret"}
+    )
+
+    assert resp.status_code == 404
+    assert resp.json["error"] == "NotFound"
+
+
+def test_chat_maps_claude_failure_to_502(client, monkeypatch):
+    job_id = _seed_extracted_job(client, monkeypatch)
+    _patch_chat_assistant(monkeypatch, FakeChatCompletionClient(canned_text=[ClaudeApiError("timeout")]))
+
+    resp = client.post(
+        f"/api/drawings/{job_id}/chat", json={"message": "hi"}, headers={"x-api-key": "test-shared-secret"}
+    )
+
+    assert resp.status_code == 502
+    assert resp.json["error"] == "ExtractionServiceError"
+
+
+def test_chat_rejects_non_list_history(client, monkeypatch):
+    job_id = _seed_extracted_job(client, monkeypatch)
+    _patch_chat_assistant(monkeypatch, FakeChatCompletionClient(canned_text=["ok"]))
+
+    resp = client.post(
+        f"/api/drawings/{job_id}/chat",
+        json={"message": "hi", "history": "not-a-list"},
+        headers={"x-api-key": "test-shared-secret"},
+    )
+
+    assert resp.status_code == 400
+    assert resp.json["error"] == "ValidationError"

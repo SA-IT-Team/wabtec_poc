@@ -127,6 +127,27 @@ class IChatCompletionClient(ABC):
         transport/API failure; may return content that does NOT validate -- caller is responsible
         for schema validation/repair, see extraction_orchestrator.py)."""
 
+    @abstractmethod
+    def chat_text(self, *, system: str, messages: list[dict[str, Any]]) -> str:
+        """Free-form conversational reply (no forced tool use) -- used by the chatbot's Q&A
+        endpoint, see chat_assistant.py::ChatAssistant.ask. Raises ClaudeApiError on transport/API
+        failure."""
+
+    @abstractmethod
+    def chat_structured(
+        self,
+        *,
+        system: str,
+        messages: list[dict[str, Any]],
+        tool_name: str,
+        tool_description: str,
+        json_schema: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Forced tool-use call returning a dict matching json_schema -- same mechanism as
+        extract_balloons, generalized so chat_assistant.py's analysis pass doesn't need its own
+        Anthropic SDK wiring. Raises ClaudeApiError on transport/API failure; may return {} if
+        Claude replies without calling the forced tool (see ClaudeChatClient's implementation)."""
+
 
 class ClaudeChatClient(IChatCompletionClient):
     """Real implementation backed by Claude's Messages API (Anthropic Python SDK).
@@ -191,20 +212,91 @@ class ClaudeChatClient(IChatCompletionClient):
             return {}
         return tool_use.input
 
+    @external_api_retry((Exception,))
+    def chat_text(self, *, system: str, messages: list[dict[str, Any]]) -> str:
+        try:
+            response = self._client.messages.create(
+                model=self._model,
+                max_tokens=self._max_tokens,
+                system=system,
+                messages=messages,
+            )
+        except Exception as exc:  # noqa: BLE001 - normalize every SDK failure to our own error type
+            raise ClaudeApiError(f"Claude chat call failed: {exc}") from exc
+
+        text_blocks = [block.text for block in response.content if getattr(block, "type", None) == "text"]
+        return "".join(text_blocks).strip()
+
+    @external_api_retry((Exception,))
+    def chat_structured(
+        self,
+        *,
+        system: str,
+        messages: list[dict[str, Any]],
+        tool_name: str,
+        tool_description: str,
+        json_schema: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            response = self._client.messages.create(
+                model=self._model,
+                max_tokens=self._max_tokens,
+                system=system,
+                tools=[{"name": tool_name, "description": tool_description, "input_schema": json_schema}],
+                tool_choice={"type": "tool", "name": tool_name},
+                messages=messages,
+            )
+        except Exception as exc:  # noqa: BLE001 - normalize every SDK failure to our own error type
+            raise ClaudeApiError(f"Claude structured chat call failed: {exc}") from exc
+
+        tool_use = next((block for block in response.content if getattr(block, "type", None) == "tool_use"), None)
+        if tool_use is None:
+            logger.warning("Claude chat_structured response ('%s') had no tool_use block (stop_reason=%s)", tool_name, response.stop_reason)
+            return {}
+        return tool_use.input
+
 
 class FakeChatCompletionClient(IChatCompletionClient):
-    """Test double: pops canned responses in order. Each entry is either a dict (returned as-is,
-    valid or intentionally invalid for repair-loop testing) or an Exception (raised)."""
+    """Test double: pops canned responses in order, per method. Each entry is either the value to
+    return as-is (a dict for the two structured methods, a str for chat_text) or an Exception to
+    raise -- used across extraction tests (`canned_responses`) and chat-assistant tests
+    (`canned_text` / `canned_structured`)."""
 
-    def __init__(self, canned_responses: list[dict | Exception]):
-        self._responses = list(canned_responses)
+    def __init__(
+        self,
+        canned_responses: list[dict | Exception] | None = None,
+        canned_text: list[str | Exception] | None = None,
+        canned_structured: list[dict | Exception] | None = None,
+    ):
+        self._responses = list(canned_responses or [])
+        self._text_responses = list(canned_text or [])
+        self._structured_responses = list(canned_structured or [])
         self.calls: list[dict] = []
+        self.chat_calls: list[dict] = []
 
     def extract_balloons(self, **kwargs) -> dict:
         self.calls.append(kwargs)
         if not self._responses:
             raise ClaudeApiError("FakeChatCompletionClient: no more canned responses configured.")
         item = self._responses.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    def chat_text(self, **kwargs) -> str:
+        self.chat_calls.append(kwargs)
+        if not self._text_responses:
+            raise ClaudeApiError("FakeChatCompletionClient: no more canned text responses configured.")
+        item = self._text_responses.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    def chat_structured(self, **kwargs) -> dict:
+        self.chat_calls.append(kwargs)
+        if not self._structured_responses:
+            raise ClaudeApiError("FakeChatCompletionClient: no more canned structured responses configured.")
+        item = self._structured_responses.pop(0)
         if isinstance(item, Exception):
             raise item
         return item

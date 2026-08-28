@@ -15,6 +15,8 @@ non-framework) Vercel convention this app doesn't use. See deployment-vercel.md.
     POST /api/drawings/<jobId>/balloons/<page>/<balloonNumber>/review   -- confirm/correct/flag one balloon
     POST /api/drawings/<jobId>/signoff                                   -- sign off once every balloon is reconciled
     POST /api/drawings/<jobId>/export                                     -- generate the Excel, only once signed off
+    POST /api/drawings/<jobId>/analyze                                     -- AI + rule-based feedback report (chatbot)
+    POST /api/drawings/<jobId>/chat                                         -- free-form Q&A grounded in this job's data
     GET  /api/health                                                       -- unauthenticated liveness check
 
 Why two upload paths: Vercel Functions cap request/response bodies at 4.5MB (platform limit, not
@@ -31,7 +33,10 @@ check/reconciliation to ensure 100% data accuracy" requirement, not a decorative
 
 Azure is still used for two *services* -- Document Intelligence (layout/OCR) and Storage (Blob for
 files, Table for job records, and now the reconciliation record) -- but nothing here runs on Azure
-compute. Claude (Anthropic Messages API) does the structured extraction.
+compute. Claude (Anthropic Messages API) does the structured extraction, and now also the chatbot
+(.../analyze, .../chat -- see src/chat_assistant.py): general analysis and feedback on missing
+information, incomplete data, inconsistencies between sheets, and common mistakes, grounded in the
+same reconciliation record and combined with deterministic checks (src/analysis_rules.py).
 
 Auth: there is no platform-level gate in front of a Vercel Function, so this app enforces its own
 shared-secret header (API_ACCESS_KEY / x-api-key) on every route except /api/health. That is
@@ -74,7 +79,7 @@ from src.exceptions import (
 from src.job_store import TableStorageJobStore
 from src.models import JobRecord, JobStatus
 from src.pipeline import ExtractionPipeline, PipelineContext
-from src.pipeline_factory import build_pipeline, build_reconciliation_service
+from src.pipeline_factory import build_chat_assistant, build_pipeline, build_reconciliation_service
 from src.reconciliation import ReconciliationService
 from src.storage_helpers import generate_upload_sas, get_container, read_blob_bytes, write_export_and_get_sas
 from src.upload_handler import SUPPORTED_CONTENT_TYPES, UploadHandler, validate_file
@@ -390,6 +395,61 @@ def export_drawing(job_id: str):
         return jsonify({"jobId": job_id, "exportUrl": export_url}), 200
     except JobNotFoundError:
         return _json_error("NotFound", f"No job found for id '{job_id}'.", 404)
+    except Exception as exc:  # noqa: BLE001 - mapped by type inside _map_domain_error
+        return _map_domain_error(exc)
+
+
+@app.route("/api/drawings/<job_id>/analyze", methods=["POST", "OPTIONS"])
+@_require_api_key
+def analyze_drawing(job_id: str):
+    """AI chatbot's structured feedback pass -- missing information, incomplete data,
+    inconsistencies between sheets, and common mistakes (requirements.md's chatbot ask). Combines
+    deterministic checks (src/analysis_rules.py) with an AI review pass over the current
+    reconciliation state; safe to re-run at any point in review -- nothing is cached, so it always
+    reflects the latest reviewer corrections."""
+    try:
+        settings = Settings.from_env()
+    except RuntimeError as exc:
+        logger.exception("Configuration error")
+        return _json_error("ConfigurationError", str(exc), 500)
+
+    try:
+        record = build_reconciliation_service(settings).get_record(job_id)
+        report = build_chat_assistant(settings).analyze(record)
+        return Response(report.model_dump_json(), status=200, mimetype="application/json")
+    except JobNotFoundError:
+        return _json_error("NotFound", f"No reconciliation record found for job '{job_id}'.", 404)
+    except Exception as exc:  # noqa: BLE001 - mapped by type inside _map_domain_error
+        return _map_domain_error(exc)
+
+
+@app.route("/api/drawings/<job_id>/chat", methods=["POST", "OPTIONS"])
+@_require_api_key
+def chat_with_drawing(job_id: str):
+    """Free-form Q&A grounded in this job's extracted + reconciled balloon data (requirements.md's
+    "general analysis" chatbot ask). Stateless server-side: the client resends its own running
+    transcript as `history` on every call (see wabtec_poc_app's ChatPanel) -- nothing is persisted
+    here, same "no server-side session state" pattern as reconciliation identity."""
+    try:
+        settings = Settings.from_env()
+    except RuntimeError as exc:
+        logger.exception("Configuration error")
+        return _json_error("ConfigurationError", str(exc), 500)
+
+    payload = request.get_json(silent=True) or {}
+    message = (payload.get("message") or "").strip()
+    history = payload.get("history") or []
+    if not message:
+        return _json_error("ValidationError", "Request body must include a non-empty 'message'.", 400)
+    if not isinstance(history, list):
+        return _json_error("ValidationError", "'history' must be a list of {role, content} messages.", 400)
+
+    try:
+        record = build_reconciliation_service(settings).get_record(job_id)
+        reply = build_chat_assistant(settings).ask(record, message, history)
+        return jsonify({"reply": reply}), 200
+    except JobNotFoundError:
+        return _json_error("NotFound", f"No reconciliation record found for job '{job_id}'.", 404)
     except Exception as exc:  # noqa: BLE001 - mapped by type inside _map_domain_error
         return _map_domain_error(exc)
 
