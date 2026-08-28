@@ -3,6 +3,8 @@
 **Product Requirements Document**
 Doc No. BDX-PRD-001 · Rev A — Draft · Date 2026-08-26 · Prepared by Product & BA
 
+> **Implementation note:** [`wabtec_poc`](../wabtec_poc) now implements FR-21 through FR-26 (Reconciliation & QC, §7) — the requirement this document's Executive Summary and §2 name as the core guarantee — in simplified, single-reviewer form. See the per-FR status notes in §7 and [`architecture-poc.md`](architecture-poc.md) §1.3/§1.4/§3.2 for exactly what's implemented and what's still simplified versus this document's target state.
+
 ---
 
 ## 1. Executive Summary
@@ -118,14 +120,14 @@ Numbered as `FR-##`. Priority: **MUST** ships in v1, **SHOULD** targeted for v1 
 
 **Reconciliation & QC**
 
-| ID | Requirement | Priority |
-|---|---|---|
-| FR-21 | The system shall provide a side-by-side view of the source drawing (zoomable, pannable) and the extracted data row for every balloon during review. | MUST |
-| FR-22 | The system shall require a second, independent reviewer (not the original extractor) to confirm or correct every balloon before the drawing can be marked reconciled. | MUST |
-| FR-23 | Where the reviewer's value differs from the extracted value, the system shall log both values, the reviewer identity, and require a resolution before the balloon is considered closed. | MUST |
-| FR-24 | The system shall present a completion indicator showing count of balloons reviewed versus total, and prevent sign-off until 100% are reviewed. | MUST |
-| FR-25 | The system shall let a reviewer flag a balloon as "cannot determine from source" and route it to the drawing owner rather than force a guess. | MUST |
-| FR-26 | Sign-off shall capture the signer's identity, timestamp, and drawing revision, and lock the reconciled record against further silent edits. | MUST |
+| ID | Requirement | Priority | POC status |
+|---|---|---|---|
+| FR-21 | The system shall provide a side-by-side view of the source drawing (zoomable, pannable) and the extracted data row for every balloon during review. | MUST | **Partial.** `GET .../reconciliation` returns every balloon's extracted/reviewed data side by side in `wabtec_poc_app`'s ReconciliationPanel; there is no zoomable/pannable *image* of the source drawing in the review UI — only the extracted values, not a rendering of the drawing itself. |
+| FR-22 | The system shall require a second, independent reviewer (not the original extractor) to confirm or correct every balloon before the drawing can be marked reconciled. | MUST | **Implemented, with a caveat.** Segregation of duties is enforced server-side (`reviewerId` ≠ the drawing's `submittedBy`) — but both identities are self-declared strings, not authenticated accounts. See architecture-poc.md §3.3. |
+| FR-23 | Where the reviewer's value differs from the extracted value, the system shall log both values, the reviewer identity, and require a resolution before the balloon is considered closed. | MUST | **Implemented, simplified.** Both values, the reviewer, and a `discrepancy` flag are recorded the moment a correction is submitted — resolution is immediate, one review pass, not a separate open/resolve step. This document's "resolution" language describes a two-human-disagreement model this POC doesn't implement; see architecture-poc.md §1.4 trade-off #3. |
+| FR-24 | The system shall present a completion indicator showing count of balloons reviewed versus total, and prevent sign-off until 100% are reviewed. | MUST | **Implemented.** `reconciliation.percentComplete`/`readyForSignoff`; sign-off returns `409` with the exact open-balloon list otherwise. |
+| FR-25 | The system shall let a reviewer flag a balloon as "cannot determine from source" and route it to the drawing owner rather than force a guess. | MUST | **Partial.** The flag exists (`cannot_determine`, with a required reason) and correctly still blocks sign-off — but nothing routes it to a drawing owner; it just sits flagged until someone re-reviews it. |
+| FR-26 | Sign-off shall capture the signer's identity, timestamp, and drawing revision, and lock the reconciled record against further silent edits. | MUST | **Implemented.** Signer, timestamp, and revision are stamped on sign-off, and the record rejects further review calls once `signed_off` is true (a lock added beyond this requirement's literal text, once it was clear an unlocked record could otherwise drift after sign-off). |
 
 **Traceability, audit & reporting**
 

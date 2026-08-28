@@ -79,8 +79,79 @@ class JobRecord(BaseModel):
     error_reason: Optional[str] = None
 
 
+# --------------------------------------------------------------------------------------
+# Reconciliation: the human quality-check pass every balloon must go through before its
+# drawing can be exported. See src/reconciliation.py for the state machine and business rules.
+# Defined ahead of ExtractionResult, which embeds ReconciliationStatus.
+# --------------------------------------------------------------------------------------
+
+
+class ReviewAction(str, Enum):
+    CONFIRM = "confirm"  # reviewer agrees with the extracted value as-is
+    CORRECT = "correct"  # reviewer supplies a different value
+    CANNOT_DETERMINE = "cannot_determine"  # reviewer can't tell from the source -- not a guess
+
+
+class BalloonReviewStatus(str, Enum):
+    PENDING = "pending"  # not yet reviewed by anyone
+    RECONCILED = "reconciled"  # reviewed; confirmed or corrected -- counts toward 100%
+    CANNOT_DETERMINE = "cannot_determine"  # reviewed but flagged undeterminable -- still blocks sign-off
+
+
+class BalloonReviewRecord(BaseModel):
+    """One balloon's reconciliation state. `extracted` is the immutable AI-produced snapshot;
+    `reviewed` is what a human confirmed or corrected it to -- the export (once signed off) is
+    built from `reviewed` where present, `extracted` otherwise (see ReconciliationService)."""
+
+    page: int
+    balloon_number: int
+    extracted: ExtractedBalloon
+    reviewed: Optional[ExtractedBalloon] = None
+    status: BalloonReviewStatus = BalloonReviewStatus.PENDING
+    discrepancy: bool = False  # True iff a reviewer's value differs from the extracted one (FR-23)
+    reviewer_id: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
+    notes: Optional[str] = None
+
+
+class ReconciliationRecord(BaseModel):
+    """The full reconciliation state for one drawing revision -- persisted as a single JSON blob
+    (see src/reconciliation_store.py); this IS the source of truth for what gets exported."""
+
+    job_id: str
+    drawing_number: Optional[str] = None
+    revision: Optional[str] = None
+    submitted_by: Optional[str] = None  # self-declared; see reconciliation.py's module docstring
+    balloons: list[BalloonReviewRecord]
+    signed_off: bool = False
+    signed_off_by: Optional[str] = None
+    signed_off_at: Optional[datetime] = None
+    created_at: datetime
+
+
+class ReconciliationStatus(BaseModel):
+    """Summary shape for GET /api/drawings/{jobId}/reconciliation and embedded in ExtractionResult."""
+
+    job_id: str
+    total_balloons: int
+    pending: int
+    reconciled: int
+    cannot_determine: int
+    percent_complete: float  # (reconciled + cannot_determine) / total, in [0, 100]
+    ready_for_signoff: bool  # every balloon is `reconciled` (cannot_determine still blocks, see above)
+    signed_off: bool
+    signed_off_by: Optional[str] = None
+    signed_off_at: Optional[datetime] = None
+
+
 class ExtractionResult(BaseModel):
-    """Response body for POST /api/drawings/extract (architecture-poc.md §3.2)."""
+    """Response body for POST /api/drawings/extract (architecture-poc.md §3.2).
+
+    `export_url` is always null on this response now -- extraction produces a *draft* only.
+    Nothing is exportable until every balloon has been reviewed and the drawing signed off
+    (requirements.md's "quality check/reconciliation to ensure 100% data accuracy" item,
+    see src/reconciliation.py and `reconciliation` below).
+    """
 
     job_id: str
     drawing_number: Optional[str] = None
@@ -90,3 +161,4 @@ class ExtractionResult(BaseModel):
     balloon_count_mismatch: bool
     balloons: list[ExtractedBalloon]
     export_url: Optional[str] = None
+    reconciliation: Optional[ReconciliationStatus] = None

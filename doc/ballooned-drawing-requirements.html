@@ -425,6 +425,11 @@
 
     <main>
 
+      <div class="callout">
+        <span class="lbl">Implementation note</span>
+        <p><a href="../wabtec_poc">wabtec_poc</a> now implements FR-21 through FR-26 (Reconciliation &amp; QC, §7) — a real, working reconciliation/sign-off gate, in a deliberately simplified single-reviewer form. See the per-FR status notes in §7 and <a href="architecture-poc.html">architecture-poc.html</a> §1.3/§1.4/§3.2 for what's implemented as written, what's simplified, and what's still deferred.</p>
+      </div>
+
       <!-- 1 -->
       <section id="s1">
         <div class="sec-head"><span class="balloon">1</span><h2>Executive Summary</h2></div>
@@ -600,14 +605,14 @@
 
         <p><strong>Reconciliation &amp; QC</strong></p>
         <div class="twrap"><table>
-          <thead><tr><th>ID</th><th>Requirement</th><th>Priority</th></tr></thead>
+          <thead><tr><th>ID</th><th>Requirement</th><th>Priority</th><th>POC status</th></tr></thead>
           <tbody>
-            <tr><td><span class="fid">21</span></td><td>The system shall provide a side-by-side view of the source drawing (zoomable, pannable) and the extracted data row for every balloon during review.</td><td><span class="pri must">MUST</span></td></tr>
-            <tr><td><span class="fid">22</span></td><td>The system shall require a second, independent reviewer (not the original extractor) to confirm or correct every balloon before the drawing can be marked reconciled.</td><td><span class="pri must">MUST</span></td></tr>
-            <tr><td><span class="fid">23</span></td><td>Where the reviewer's value differs from the extracted value, the system shall log both values, the reviewer identity, and require a resolution before the balloon is considered closed.</td><td><span class="pri must">MUST</span></td></tr>
-            <tr><td><span class="fid">24</span></td><td>The system shall present a completion indicator showing count of balloons reviewed versus total, and prevent sign-off until 100% are reviewed.</td><td><span class="pri must">MUST</span></td></tr>
-            <tr><td><span class="fid">25</span></td><td>The system shall let a reviewer flag a balloon as "cannot determine from source" and route it to the drawing owner rather than force a guess.</td><td><span class="pri must">MUST</span></td></tr>
-            <tr><td><span class="fid">26</span></td><td>Sign-off shall capture the signer's identity, timestamp, and drawing revision, and lock the reconciled record against further silent edits.</td><td><span class="pri must">MUST</span></td></tr>
+            <tr><td><span class="fid">21</span></td><td>The system shall provide a side-by-side view of the source drawing (zoomable, pannable) and the extracted data row for every balloon during review.</td><td><span class="pri must">MUST</span></td><td><strong>Partial.</strong> The review UI (<span class="mono">ReconciliationPanel</span>) shows every balloon's extracted data row and lets a reviewer confirm/correct it, but there is no zoomable/pannable <em>image</em> of the source drawing in the review UI — only the extracted values, not the drawing itself.</td></tr>
+            <tr><td><span class="fid">22</span></td><td>The system shall require a second, independent reviewer (not the original extractor) to confirm or correct every balloon before the drawing can be marked reconciled.</td><td><span class="pri must">MUST</span></td><td><strong>Implemented, with a caveat.</strong> The app rejects a review call where <span class="mono">reviewerId</span> matches the job's <span class="mono">submittedBy</span> (<span class="mono">403</span>) — but both identities are self-declared strings, not authenticated accounts.</td></tr>
+            <tr><td><span class="fid">23</span></td><td>Where the reviewer's value differs from the extracted value, the system shall log both values, the reviewer identity, and require a resolution before the balloon is considered closed.</td><td><span class="pri must">MUST</span></td><td><strong>Implemented, simplified.</strong> Both the original <span class="mono">extracted</span> value and the <span class="mono">reviewed</span> value are retained on the record with a <span class="mono">discrepancy</span> flag and reviewer identity — but resolution is immediate, one review pass, not a separate open/resolve step or a second human adjudicating a disagreement.</td></tr>
+            <tr><td><span class="fid">24</span></td><td>The system shall present a completion indicator showing count of balloons reviewed versus total, and prevent sign-off until 100% are reviewed.</td><td><span class="pri must">MUST</span></td><td><strong>Implemented.</strong> The reconciliation status response carries <span class="mono">pending/reconciled/cannotDetermine/percentComplete/readyForSignoff</span>; sign-off with anything still open returns <span class="mono">409</span> with the exact open-balloon list.</td></tr>
+            <tr><td><span class="fid">25</span></td><td>The system shall let a reviewer flag a balloon as "cannot determine from source" and route it to the drawing owner rather than force a guess.</td><td><span class="pri must">MUST</span></td><td><strong>Partial.</strong> A reviewer can flag <span class="mono">cannot_determine</span> with required notes, and that balloon blocks sign-off — but nothing routes it to a drawing owner; it just sits flagged until a reviewer revisits it.</td></tr>
+            <tr><td><span class="fid">26</span></td><td>Sign-off shall capture the signer's identity, timestamp, and drawing revision, and lock the reconciled record against further silent edits.</td><td><span class="pri must">MUST</span></td><td><strong>Implemented.</strong> Sign-off stamps <span class="mono">signedOffBy</span>/<span class="mono">signedOffAt</span>; the record rejects further review calls once <span class="mono">signed_off</span> is true (a lock added beyond this requirement's literal text, once it was clear an unlocked record could otherwise drift after sign-off).</td></tr>
           </tbody>
         </table></div>
 

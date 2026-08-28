@@ -44,3 +44,26 @@ class SchemaValidationError(ExtractionServiceError):
 
 class JobNotFoundError(BdxError):
     """Raised when a job id has no corresponding record. Maps to HTTP 404."""
+
+
+class BalloonNotFoundError(BdxError):
+    """Raised when a (page, balloon_number) pair has no reconciliation record for the given job.
+    Maps to HTTP 404."""
+
+
+class SegregationOfDutiesError(BdxError):
+    """Raised when a reviewer/signer id matches the job's self-declared submitter id (FR-22:
+    the reviewer must not be the same person who ran the extraction). Maps to HTTP 403.
+
+    "Same person" is self-declared, not authenticated -- see reconciliation.py's module docstring
+    for why that's still worth enforcing in a POC with no real identity system."""
+
+
+class IncompleteReconciliationError(BdxError):
+    """Raised on sign-off or export when one or more balloons are not yet `reconciled` (FR-18,
+    FR-24). Maps to HTTP 409. Carries the list of still-open (page, balloon_number) pairs so the
+    caller can show exactly what's blocking it, not just that something is."""
+
+    def __init__(self, message: str, open_balloons: list[tuple[int, int]]):
+        super().__init__(message)
+        self.open_balloons = open_balloons

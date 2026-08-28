@@ -1,5 +1,5 @@
-"""Wires the extraction pipeline together from Settings. Called by app.py's routes so every
-entry point builds an identically-configured pipeline.
+"""Wires the extraction pipeline (and the reconciliation service) together from Settings. Called
+by app.py's routes so every route builds identically-configured collaborators.
 """
 from __future__ import annotations
 
@@ -13,6 +13,8 @@ from src.extraction_orchestrator import ExtractionOrchestrator, VisionGroundedEx
 from src.job_store import TableStorageJobStore
 from src.pipeline import ExtractionPipeline
 from src.preprocessor import DrawingPreprocessor
+from src.reconciliation import ReconciliationService
+from src.reconciliation_store import BlobReconciliationStore
 from src.tolerance_normalizer import ToleranceNormalizer
 
 
@@ -36,3 +38,7 @@ def build_pipeline(settings: Settings) -> tuple[ExtractionPipeline, TableStorage
     job_store = TableStorageJobStore(settings.storage_connection_string)
     blob_service = BlobServiceClient.from_connection_string(settings.storage_connection_string)
     return pipeline, job_store, blob_service
+
+
+def build_reconciliation_service(settings: Settings) -> ReconciliationService:
+    return ReconciliationService(BlobReconciliationStore(settings.storage_connection_string))

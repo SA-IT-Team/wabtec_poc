@@ -6,12 +6,16 @@ Vercel detects Flask via `flask` in requirements.txt and routes every request st
 app/) for Vercel to find it; it does NOT live under /api/, which is a different (file-based,
 non-framework) Vercel convention this app doesn't use. See deployment-vercel.md.
 
-    POST /api/drawings/extract          -- upload + synchronously process one SMALL drawing
-                                            (multipart, well under Vercel's 4.5MB body cap)
-    POST /api/drawings/upload-url       -- get a direct-to-blob SAS URL for a LARGE drawing
-    POST /api/drawings/<jobId>/process  -- process a drawing already uploaded via the SAS above
-    GET  /api/drawings/<jobId>          -- re-fetch a previously computed result
-    GET  /api/health                   -- unauthenticated liveness check
+    POST /api/drawings/extract                                          -- upload + extract one SMALL drawing
+                                                                            (multipart, well under Vercel's 4.5MB cap)
+    POST /api/drawings/upload-url                                       -- get a direct-to-blob SAS URL for a LARGE drawing
+    POST /api/drawings/<jobId>/process                                  -- extract a drawing already uploaded via that SAS
+    GET  /api/drawings/<jobId>                                          -- re-fetch a previously computed job record
+    GET  /api/drawings/<jobId>/reconciliation                           -- full reconciliation state, every balloon
+    POST /api/drawings/<jobId>/balloons/<page>/<balloonNumber>/review   -- confirm/correct/flag one balloon
+    POST /api/drawings/<jobId>/signoff                                   -- sign off once every balloon is reconciled
+    POST /api/drawings/<jobId>/export                                     -- generate the Excel, only once signed off
+    GET  /api/health                                                       -- unauthenticated liveness check
 
 Why two upload paths: Vercel Functions cap request/response bodies at 4.5MB (platform limit, not
 configurable) -- see https://vercel.com/docs/functions/limitations#request-body-size. Real
@@ -19,13 +23,22 @@ multi-page ballooned drawings routinely exceed that. The SAS-based path works ar
 never routing the file's bytes through this function at all -- the browser uploads directly to
 Blob Storage, and this app only ever sees a blob path reference.
 
+Extraction no longer auto-exports: POST /api/drawings/extract and .../process now return a
+*draft* -- every balloon starts `pending` reconciliation and export_url is always null on that
+response. Nothing is exportable until every balloon has gone through the balloons/.../review
+endpoint and the drawing has been signed off (src/reconciliation.py) -- this is the "quality
+check/reconciliation to ensure 100% data accuracy" requirement, not a decorative status field.
+
 Azure is still used for two *services* -- Document Intelligence (layout/OCR) and Storage (Blob for
-files, Table for job records) -- but nothing here runs on Azure compute. Claude (Anthropic Messages
-API) does the structured extraction.
+files, Table for job records, and now the reconciliation record) -- but nothing here runs on Azure
+compute. Claude (Anthropic Messages API) does the structured extraction.
 
 Auth: there is no platform-level gate in front of a Vercel Function, so this app enforces its own
 shared-secret header (API_ACCESS_KEY / x-api-key) on every route except /api/health. That is
-POC-grade only -- see deployment-vercel.md §3 for what it explicitly is not.
+POC-grade only -- see deployment-vercel.md §3 for what it explicitly is not. Note this is a
+different, weaker guarantee than reviewer/signer identity: API_ACCESS_KEY gates whether a caller
+can talk to this app at all; reviewerId/signerId are self-declared strings with no authentication
+behind them at all -- see reconciliation.py's module docstring.
 
 Run locally with `python app.py` (or `flask --app app run --port 8000`); .env is loaded below.
 """
@@ -46,18 +59,23 @@ from flask import Flask, Response, jsonify, request
 load_dotenv()
 
 from src.config import Settings
+from src.excel_writer import ExcelWriter
 from src.exceptions import (
+    BalloonNotFoundError,
     ExtractionServiceError,
+    IncompleteReconciliationError,
     JobNotFoundError,
     PageLimitExceededError,
     QualityThresholdError,
+    SegregationOfDutiesError,
     UnsupportedFileTypeError,
     ValidationError,
 )
 from src.job_store import TableStorageJobStore
 from src.models import JobRecord, JobStatus
 from src.pipeline import ExtractionPipeline, PipelineContext
-from src.pipeline_factory import build_pipeline
+from src.pipeline_factory import build_pipeline, build_reconciliation_service
+from src.reconciliation import ReconciliationService
 from src.storage_helpers import generate_upload_sas, get_container, read_blob_bytes, write_export_and_get_sas
 from src.upload_handler import SUPPORTED_CONTENT_TYPES, UploadHandler, validate_file
 
@@ -102,29 +120,40 @@ def _require_api_key(fn):
     return wrapper
 
 
-def _json_error(error: str, message: str, status: int):
-    return jsonify({"error": error, "message": message}), status
+def _json_error(error: str, message: str, status: int, **extra):
+    return jsonify({"error": error, "message": message, **extra}), status
 
 
-def _map_pipeline_error(exc: Exception):
+def _map_domain_error(exc: Exception):
     if isinstance(exc, UnsupportedFileTypeError):
         return _json_error("UnsupportedFileType", str(exc), 400)
     if isinstance(exc, PageLimitExceededError):
         return _json_error("PageLimitExceeded", str(exc), 413)
     if isinstance(exc, QualityThresholdError):
         return _json_error("QualityThresholdNotMet", str(exc), 422)
+    if isinstance(exc, BalloonNotFoundError):
+        return _json_error("BalloonNotFound", str(exc), 404)
+    if isinstance(exc, SegregationOfDutiesError):
+        return _json_error("SegregationOfDutiesViolation", str(exc), 403)
+    if isinstance(exc, IncompleteReconciliationError):
+        return _json_error(
+            "IncompleteReconciliation", str(exc), 409, openBalloons=[{"page": p, "balloonNumber": n} for p, n in exc.open_balloons]
+        )
     if isinstance(exc, ValidationError):
         return _json_error("ValidationError", str(exc), 400)
     if isinstance(exc, ExtractionServiceError):
         logger.exception("Upstream extraction service failure")
         return _json_error("ExtractionServiceError", str(exc), 502)
-    logger.exception("Unhandled error processing drawing")
+    logger.exception("Unhandled error")
     return _json_error("InternalError", "An unexpected error occurred.", 500)
 
 
-def _finish_job(job_store, blob_service, job: JobRecord, ctx: PipelineContext, settings: Settings):
-    """Shared tail end of both extraction paths: export, job bookkeeping, response shaping."""
-    export_url = write_export_and_get_sas(blob_service, job.job_id, ctx.excel_bytes, settings.storage_connection_string)
+def _finish_extraction(
+    reconciliation_service: ReconciliationService, job_store, job: JobRecord, ctx: PipelineContext, submitted_by: str | None
+):
+    """Tail end of both extraction paths: seed the reconciliation record (every balloon starts
+    `pending`) and shape the draft response -- no export happens here anymore, see module docstring."""
+    reconciliation_service.start(job.job_id, ctx.drawing_number, ctx.revision, ctx.balloons, submitted_by)
 
     job.status = JobStatus.COMPLETE
     job.balloon_count_detected = ctx.balloon_count_detected
@@ -133,15 +162,17 @@ def _finish_job(job_store, blob_service, job: JobRecord, ctx: PipelineContext, s
     job.completed_at = datetime.now(timezone.utc)
     job_store.update(job)
 
-    result = ExtractionPipeline.to_result(ctx, export_url)
+    reconciliation_status = reconciliation_service.get_status(job.job_id)
+    result = ExtractionPipeline.to_result(ctx, export_url=None)
+    result.reconciliation = reconciliation_status
     return Response(result.model_dump_json(), status=200, mimetype="application/json")
 
 
 @app.route("/api/drawings/extract", methods=["POST", "OPTIONS"])
 @_require_api_key
 def extract_drawing():
-    """Small-file convenience path: one multipart POST, synchronous result. Only safe for files
-    comfortably under Vercel's 4.5MB request body cap -- for anything larger, use
+    """Small-file convenience path: one multipart POST, synchronous draft result. Only safe for
+    files comfortably under Vercel's 4.5MB request body cap -- for anything larger, use
     POST /api/drawings/upload-url followed by POST /api/drawings/<jobId>/process instead."""
     try:
         settings = Settings.from_env()
@@ -155,18 +186,20 @@ def extract_drawing():
 
     file_bytes = uploaded.read()
     content_type = uploaded.mimetype or "application/octet-stream"
+    submitted_by = request.form.get("submittedBy") or None
 
     try:
         pipeline, job_store, blob_service = build_pipeline(settings)
+        reconciliation_service = build_reconciliation_service(settings)
         upload_handler = UploadHandler(lambda name: get_container(blob_service, name), job_store)
         job = upload_handler.handle_upload(file_bytes=file_bytes, file_name=uploaded.filename, content_type=content_type)
 
         ctx = PipelineContext(job=job, file_bytes=file_bytes, content_type=content_type)
         ctx = pipeline.run(ctx)
 
-        return _finish_job(job_store, blob_service, job, ctx, settings)
-    except Exception as exc:  # noqa: BLE001 - mapped by type inside _map_pipeline_error
-        return _map_pipeline_error(exc)
+        return _finish_extraction(reconciliation_service, job_store, job, ctx, submitted_by)
+    except Exception as exc:  # noqa: BLE001 - mapped by type inside _map_domain_error
+        return _map_domain_error(exc)
 
 
 @app.route("/api/drawings/upload-url", methods=["POST", "OPTIONS"])
@@ -228,11 +261,13 @@ def process_drawing(job_id: str):
     payload = request.get_json(silent=True) or {}
     blob_path = payload.get("blobPath")
     content_type = payload.get("contentType")
+    submitted_by = payload.get("submittedBy") or None
     if not blob_path or not content_type:
         return _json_error("ValidationError", "Request body must include 'blobPath' and 'contentType'.", 400)
 
     try:
         pipeline, job_store, blob_service = build_pipeline(settings)
+        reconciliation_service = build_reconciliation_service(settings)
         job = job_store.get(job_id)
 
         file_bytes = read_blob_bytes(blob_service, "raw-drawings", blob_path)
@@ -241,11 +276,11 @@ def process_drawing(job_id: str):
         ctx = PipelineContext(job=job, file_bytes=file_bytes, content_type=content_type)
         ctx = pipeline.run(ctx)
 
-        return _finish_job(job_store, blob_service, job, ctx, settings)
+        return _finish_extraction(reconciliation_service, job_store, job, ctx, submitted_by)
     except JobNotFoundError:
         return _json_error("NotFound", f"No job found for id '{job_id}'.", 404)
-    except Exception as exc:  # noqa: BLE001 - mapped by type inside _map_pipeline_error
-        return _map_pipeline_error(exc)
+    except Exception as exc:  # noqa: BLE001 - mapped by type inside _map_domain_error
+        return _map_domain_error(exc)
 
 
 @app.route("/api/drawings/<job_id>", methods=["GET", "OPTIONS"])
@@ -264,6 +299,99 @@ def get_drawing_result(job_id: str):
     except Exception:  # noqa: BLE001
         logger.exception("Unhandled error fetching job")
         return _json_error("InternalError", "An unexpected error occurred.", 500)
+
+
+# --------------------------------------------------------------------------------------
+# Reconciliation: the human quality-check pass -- see src/reconciliation.py
+# --------------------------------------------------------------------------------------
+
+
+@app.route("/api/drawings/<job_id>/reconciliation", methods=["GET", "OPTIONS"])
+@_require_api_key
+def get_reconciliation(job_id: str):
+    """Full reconciliation state, every balloon -- what a review UI polls/loads to render the
+    side-by-side view (requirements FR-21)."""
+    try:
+        settings = Settings.from_env()
+        record = build_reconciliation_service(settings).get_record(job_id)
+        return Response(record.model_dump_json(), status=200, mimetype="application/json")
+    except JobNotFoundError:
+        return _json_error("NotFound", f"No reconciliation record found for job '{job_id}'.", 404)
+    except RuntimeError as exc:
+        logger.exception("Configuration error")
+        return _json_error("ConfigurationError", str(exc), 500)
+    except Exception:  # noqa: BLE001
+        logger.exception("Unhandled error fetching reconciliation state")
+        return _json_error("InternalError", "An unexpected error occurred.", 500)
+
+
+@app.route("/api/drawings/<job_id>/balloons/<int:page>/<int:balloon_number>/review", methods=["POST", "OPTIONS"])
+@_require_api_key
+def review_balloon(job_id: str, page: int, balloon_number: int):
+    try:
+        settings = Settings.from_env()
+    except RuntimeError as exc:
+        logger.exception("Configuration error")
+        return _json_error("ConfigurationError", str(exc), 500)
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        reviewer_id, action, corrected, notes = ReconciliationService.parse_review_request(payload)
+        service = build_reconciliation_service(settings)
+        updated = service.review_balloon(job_id, page, balloon_number, reviewer_id, action, corrected, notes)
+        return Response(updated.model_dump_json(), status=200, mimetype="application/json")
+    except JobNotFoundError:
+        return _json_error("NotFound", f"No job found for id '{job_id}'.", 404)
+    except Exception as exc:  # noqa: BLE001 - mapped by type inside _map_domain_error
+        return _map_domain_error(exc)
+
+
+@app.route("/api/drawings/<job_id>/signoff", methods=["POST", "OPTIONS"])
+@_require_api_key
+def sign_off(job_id: str):
+    try:
+        settings = Settings.from_env()
+    except RuntimeError as exc:
+        logger.exception("Configuration error")
+        return _json_error("ConfigurationError", str(exc), 500)
+
+    payload = request.get_json(silent=True) or {}
+    signer_id = payload.get("signerId", "")
+
+    try:
+        record = build_reconciliation_service(settings).sign_off(job_id, signer_id)
+        return Response(record.model_dump_json(), status=200, mimetype="application/json")
+    except JobNotFoundError:
+        return _json_error("NotFound", f"No job found for id '{job_id}'.", 404)
+    except Exception as exc:  # noqa: BLE001 - mapped by type inside _map_domain_error
+        return _map_domain_error(exc)
+
+
+@app.route("/api/drawings/<job_id>/export", methods=["POST", "OPTIONS"])
+@_require_api_key
+def export_drawing(job_id: str):
+    """Only reachable once every balloon is reconciled and the drawing is signed off (FR-18) --
+    IncompleteReconciliationError maps to 409 with the list of what's still open."""
+    try:
+        settings = Settings.from_env()
+    except RuntimeError as exc:
+        logger.exception("Configuration error")
+        return _json_error("ConfigurationError", str(exc), 500)
+
+    try:
+        reconciliation_service = build_reconciliation_service(settings)
+        balloons = reconciliation_service.get_reconciled_balloons(job_id)  # raises if not signed off
+        record = reconciliation_service.get_record(job_id)
+
+        excel_bytes = ExcelWriter().write(drawing_number=record.drawing_number, revision=record.revision, balloons=balloons)
+        blob_service = BlobServiceClient.from_connection_string(settings.storage_connection_string)
+        export_url = write_export_and_get_sas(blob_service, job_id, excel_bytes, settings.storage_connection_string)
+
+        return jsonify({"jobId": job_id, "exportUrl": export_url}), 200
+    except JobNotFoundError:
+        return _json_error("NotFound", f"No job found for id '{job_id}'.", 404)
+    except Exception as exc:  # noqa: BLE001 - mapped by type inside _map_domain_error
+        return _map_domain_error(exc)
 
 
 @app.route("/api/health", methods=["GET"])

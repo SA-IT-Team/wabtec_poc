@@ -101,6 +101,10 @@
   .callout p{margin:.3rem 0; font-size:.92rem;}
   .callout .lbl{font-family:"IBM Plex Mono",monospace; font-size:.68rem; letter-spacing:.1em; text-transform:uppercase; color:var(--accent-ink); display:block; margin-bottom:.3rem;}
   .callout.warn .lbl{color:var(--warn);}
+  .callout.note{border-color:var(--poc); background:var(--poc-soft);}
+  .callout.note .lbl{color:var(--poc);}
+
+  .phase-label{display:block; font-family:"IBM Plex Mono",monospace; font-size:.7rem; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-faint); margin:1.6rem 0 -.3rem;}
 
   .flow{margin-top:1.25rem; display:flex; flex-direction:column; gap:0;}
   .flow-step{display:grid; grid-template-columns:2.2rem 1fr; gap:1rem; position:relative; padding-bottom:1.2rem;}
@@ -134,9 +138,9 @@
       <div class="tb-cell"><span class="k">Companion</span><span class="v">architecture-full.html</span></div>
     </div>
     <div class="scope-strip">
-      <span class="tag">No auth</span>
-      <span class="tag">No reconciliation gate</span>
-      <span class="tag">Single user</span>
+      <span class="tag">No user auth</span>
+      <span class="tag">Single-reviewer reconciliation</span>
+      <span class="tag">Single drawing at a time</span>
       <span class="tag">Disposable infra</span>
       <span class="tag">30-day retention</span>
     </div>
@@ -155,6 +159,12 @@
     </nav>
 
     <main>
+      <div class="callout note">
+        <span class="lbl">Implementation note</span>
+        <p>This baseline has moved twice since it was first written — the extraction LLM changed from Azure OpenAI to <strong>Claude (Anthropic)</strong>, and the compute host changed from an Azure Function App to a <strong>single Flask app on Vercel</strong> (Document Intelligence and Storage are still Azure services either way). This revision also updates §1.3, §1.4 trade-off #3, §2.1, §3.2, and §5 to describe the <strong>reconciliation/sign-off gate that is now implemented</strong> (<span class="mono">wabtec_poc/src/reconciliation.py</span>), a single-reviewer simplification of the two-human design in <span class="mono">architecture-full.md</span>.</p>
+        <p>Prose elsewhere in this document that still says "Azure Function App" or "Azure OpenAI" reflects the original baseline and was not mechanically rewritten — treat <span class="mono">wabtec_poc/README.md</span> and the code as current for anything this note doesn't explicitly cover.</p>
+      </div>
+
       <section id="h1">
         <div class="sec-head"><span class="balloon">1</span><h2>High-Level Design</h2></div>
 
@@ -167,47 +177,63 @@
           <div class="dc-body">
 <pre class="mermaid">
 flowchart LR
-    U[Engineer&lt;br/&gt;Postman / simple upload page] -->|POST multipart file| FN[Azure Function App&lt;br/&gt;HTTP Trigger: extract]
+    U[Engineer / reviewer&lt;br/&gt;Postman / simple upload page] -->|POST multipart file| FN[App backend&lt;br/&gt;extract / review / signoff / export]
 
     subgraph AZ[Azure Resource Group: bdx-poc-rg]
         FN --> BLOB1[(Blob Storage&lt;br/&gt;container: raw-drawings)]
         FN --> PRE[PDF→Image Preprocessor&lt;br/&gt;in-process, PyMuPDF/pdfium]
         PRE --> DI[Azure AI Document Intelligence&lt;br/&gt;prebuilt-layout model]
         DI --> FN
-        FN --> AOAI[Azure OpenAI&lt;br/&gt;GPT-4o, structured outputs]
-        AOAI --> FN
+        FN --> LLM[Extraction LLM&lt;br/&gt;vision-grounded, structured output]
+        LLM --> FN
+        FN --> REC[(Blob Storage&lt;br/&gt;container: reconciliation)]
+        REC --> FN
         FN --> XL[Excel Writer&lt;br/&gt;in-process, openpyxl]
         XL --> BLOB2[(Blob Storage&lt;br/&gt;container: exports)]
         FN --> TBL[(Azure Table Storage&lt;br/&gt;table: jobs)]
     end
 
-    FN -->|JSON result + export SAS URL| U
+    FN -->|draft JSON, then reconciliation state, then export SAS URL| U
 </pre>
           </div>
         </div>
-        <p>External dependencies: Azure AI Document Intelligence, Azure OpenAI, Azure Blob Storage, Azure Table Storage. No load balancer, no API gateway, no CDN — a Consumption or Premium Function App is sufficient at POC traffic levels.</p>
+        <p>External dependencies: Azure AI Document Intelligence (layout/OCR), the extraction LLM (structured field extraction), Azure Blob Storage (file I/O, exports, and now the reconciliation record), Azure Table Storage (lightweight job log). No load balancer, no API gateway, no CDN needed at POC traffic levels regardless of host. (Node labels here were generalized rather than mechanically updated for every past provider/host change — see the Implementation note above.)</p>
 
-        <h3 class="sub-head">1.3 Data Flow — "Extract one drawing"</h3>
+        <h3 class="sub-head">1.3 Data Flow — "Extract, then reconcile, then export"</h3>
+
+        <span class="phase-label">Extraction — produces a draft, not an export</span>
         <div class="flow">
-          <div class="flow-step"><div class="flow-num">1</div><div class="flow-body"><h4>Upload</h4><p>User <span class="mono">POST</span>s a PDF/image to <span class="mono">/api/drawings/extract</span> with the function key.</p></div></div>
-          <div class="flow-step"><div class="flow-num">2</div><div class="flow-body"><h4>Validate</h4><p>Function checks file type and page count/DPI; rejects with <span class="mono">400</span> below threshold (mirrors FR-03).</p></div></div>
-          <div class="flow-step"><div class="flow-num">3</div><div class="flow-body"><h4>Store &amp; log</h4><p>File written to <span class="mono">raw-drawings/{jobId}/source.pdf</span>; job row created in Table Storage, <span class="mono">status=Processing</span>.</p></div></div>
-          <div class="flow-step"><div class="flow-num">4</div><div class="flow-body"><h4>Rasterize</h4><p>Each page converted to a high-resolution PNG in-process.</p></div></div>
-          <div class="flow-step"><div class="flow-num">5</div><div class="flow-body"><h4>Layout extraction</h4><p>Each page sent to Document Intelligence (<span class="mono">prebuilt-layout</span>) — returns text lines, tables, and bounding boxes, giving every candidate balloon/dimension a page coordinate.</p></div></div>
-          <div class="flow-step"><div class="flow-num">6</div><div class="flow-body"><h4>Structured extraction</h4><p>DI output + page image sent to Azure OpenAI (GPT-4o, vision) with a JSON-schema tool call: identify every balloon and return nominal value, tolerance, GD&amp;T, and confidence.</p></div></div>
-          <div class="flow-step"><div class="flow-num">7</div><div class="flow-body"><h4>Reconcile counts</h4><p>AI's balloon list is checked against DI's raw circle/ellipse shape count; mismatch is surfaced in the response, not blocked — this is the exact signal the POC exists to measure.</p></div></div>
-          <div class="flow-step"><div class="flow-num">8</div><div class="flow-body"><h4>Write outputs</h4><p>Result JSON written to <span class="mono">extracted-json/</span>; Excel workbook generated from the same JSON via the configured template into <span class="mono">exports/</span>.</p></div></div>
-          <div class="flow-step"><div class="flow-num">9</div><div class="flow-body"><h4>Return</h4><p>JSON result plus a short-lived SAS URL to the Excel file returned inline; job row updated to <span class="mono">status=Complete</span>.</p></div></div>
+          <div class="flow-step"><div class="flow-num">1</div><div class="flow-body"><h4>Upload</h4><p>User <span class="mono">POST</span>s a PDF/image to <span class="mono">/api/drawings/extract</span> with the API key.</p></div></div>
+          <div class="flow-step"><div class="flow-num">2</div><div class="flow-body"><h4>Validate</h4><p>App checks file type and page count/DPI; rejects with <span class="mono">400</span> if below threshold (mirrors FR-03).</p></div></div>
+          <div class="flow-step"><div class="flow-num">3</div><div class="flow-body"><h4>Store &amp; log</h4><p>File written to <span class="mono">raw-drawings/{jobId}/source.pdf</span>; a job row is written to Table Storage with <span class="mono">status=Processing</span>.</p></div></div>
+          <div class="flow-step"><div class="flow-num">4</div><div class="flow-body"><h4>Rasterize</h4><p>Each page is rasterized to a high-resolution PNG in-process.</p></div></div>
+          <div class="flow-step"><div class="flow-num">5</div><div class="flow-body"><h4>Layout extraction</h4><p>Each page image is sent to Azure AI Document Intelligence (<span class="mono">prebuilt-layout</span>) to extract text lines, tables, and bounding boxes — gives every candidate balloon number and dimension string a page coordinate.</p></div></div>
+          <div class="flow-step"><div class="flow-num">6</div><div class="flow-body"><h4>Structured extraction</h4><p>The DI output (text + coordinates) plus the page image itself is sent to the extraction LLM with a structured-output schema: identify every balloon and return nominal value, unit, tolerance type, upper/lower tolerance, GD&amp;T, and confidence.</p></div></div>
+          <div class="flow-step"><div class="flow-num">7</div><div class="flow-body"><h4>Reconcile counts</h4><p>The model's balloon list is checked against the raw balloon-shape count DI detected (circles/ellipses); mismatch is flagged in the response, not blocked — mismatches are data, not failures (FR-10).</p></div></div>
+          <div class="flow-step"><div class="flow-num">8</div><div class="flow-body"><h4>Seed reconciliation</h4><p>A reconciliation record is seeded, one entry per detected balloon, every entry <span class="mono">pending</span> (<span class="mono">ReconciliationService.start</span>). Extraction used to stop here and generate the Excel immediately; it no longer does.</p></div></div>
+          <div class="flow-step"><div class="flow-num">9</div><div class="flow-body"><h4>Return draft</h4><p>The app returns the draft JSON result inline (<span class="mono">export_url</span> is always <span class="mono">null</span> on this response) plus a <span class="mono">reconciliation</span> summary (counts, <span class="mono">readyForSignoff</span>, <span class="mono">signedOff</span>). Job row updated to <span class="mono">status=Complete</span> — meaning <em>extraction</em> complete, not <em>reconciled</em>.</p></div></div>
+        </div>
+
+        <span class="phase-label">Reconciliation — the quality-check gate ("ensure 100% data accuracy")</span>
+        <div class="flow">
+          <div class="flow-step"><div class="flow-num">10</div><div class="flow-body"><h4>Per-balloon review</h4><p>A reviewer calls <span class="mono">POST /api/drawings/{jobId}/balloons/{page}/{balloonNumber}/review</span> with one of <span class="mono">confirm</span> / <span class="mono">correct</span> (replacement value) / <span class="mono">cannot_determine</span> (reason). The reviewer's declared identity must differ from whoever submitted the drawing, or the app returns <span class="mono">403</span> — segregation of duties (FR-22), self-declared, not authenticated (see §3.3).</p></div></div>
+          <div class="flow-step"><div class="flow-num">11</div><div class="flow-body"><h4>Sign-off</h4><p>Once every balloon is <span class="mono">reconciled</span>, <span class="mono">POST /api/drawings/{jobId}/signoff</span> locks the record: <span class="mono">signed_off=true</span>, signer identity and timestamp stamped. Any balloon still <span class="mono">pending</span>/<span class="mono">cannot_determine</span> makes this <span class="mono">409</span> with the exact list of what's open (FR-24).</p></div></div>
+          <div class="flow-step"><div class="flow-num">12</div><div class="flow-body"><h4>Post-signoff lock</h4><p>Once signed off, no further review calls are accepted on that job — the record is frozen (an addition beyond the original requirements text, made once it became clear an unlocked record could otherwise drift after sign-off).</p></div></div>
+        </div>
+
+        <span class="phase-label">Export — only reachable after sign-off</span>
+        <div class="flow">
+          <div class="flow-step"><div class="flow-num">13</div><div class="flow-body"><h4>Generate &amp; return</h4><p><span class="mono">POST /api/drawings/{jobId}/export</span> reads the reconciled values (reviewer corrections win over the model's original output, confidence stamped to 1.0 as human-verified — FR-19), generates the Excel via the configured template, writes it to <span class="mono">exports/{jobId}/characteristics.xlsx</span>, and returns a short-lived SAS URL. Called before sign-off, this is <span class="mono">409</span> with the open-balloon list (FR-18).</p></div></div>
         </div>
 
         <h3 class="sub-head">1.4 Architectural Trade-offs</h3>
         <div class="twrap"><table>
           <thead><tr><th>#</th><th>Decision</th><th>Chosen because</th><th>Sacrificed</th></tr></thead>
           <tbody>
-            <tr><td>1</td><td><strong>Single Function App, no microservices</strong></td><td>Fastest path to a testable pipeline; one deployable, trivial to iterate on prompts.</td><td>Service isolation and the module boundaries the Full architecture needs — this code is expected to be rewritten, not grown.</td></tr>
-            <tr><td>2</td><td><strong>Blob + Table Storage, no database</strong></td><td>Zero schema migrations, zero ops, matches single-user/single-job usage.</td><td>Queryability, relational integrity, reconciliation workflow state.</td></tr>
-            <tr><td>3</td><td><strong>No reconciliation gate, no auth</strong></td><td>Isolates the variable under test — extraction accuracy — from workflow/security concerns.</td><td>The requirements doc's core guarantee (100% reconciliation before export) does <strong>not</strong> hold here — output must be labeled unverified.</td></tr>
-            <tr><td>4</td><td><strong>Synchronous request/response, no queue</strong></td><td>Simplest to test with Postman; one drawing at a time, one user.</td><td>Resilience and throughput — does not survive to batch volumes (200 drawings/package in the Full NFRs).</td></tr>
+            <tr><td>1</td><td><strong>Single Function App, no microservices</strong></td><td>Fastest path to a testable pipeline; one deployable, one log stream, trivial to iterate on prompts.</td><td>Service isolation, independent scaling, and the module boundaries the Full architecture will need — this code is expected to be substantially rewritten, not grown.</td></tr>
+            <tr><td>2</td><td><strong>Blob + Table Storage, no relational database</strong></td><td>Zero schema migrations, zero ops, matches the POC's single-user/single-job-at-a-time usage.</td><td>Queryability (no "show me all jobs from this week with confidence &lt; 80%" without scanning), no relational integrity, no reconciliation workflow state machine.</td></tr>
+            <tr><td>3</td><td><strong>A real (single-reviewer) reconciliation/sign-off gate, but still no user auth</strong><br><span class="mono" style="font-size:.72rem;color:var(--ink-faint)">Superseded from the original baseline</span></td><td>Reconciliation was added because "isolate extraction accuracy from every other concern" turned out to make the POC unable to demonstrate the requirements doc's actual headline guarantee at all — a spike that can't be trusted for a real FAI/PPAP submission wasn't answering the question stakeholders cared about. Auth remains deferred: the gate's reviewer/signer identity is a self-declared string, not an authenticated account (see §3.3).</td><td>The full two-human-reviewer design in <span class="mono">architecture-full.md</span> (analyst confirms, independent reviewer confirms, disagreements get a third resolution step) — this POC has one human review pass over the model's output, so "discrepancy" means model-vs-human, not human-vs-human.</td></tr>
+            <tr><td>4</td><td><strong>Synchronous request/response, no queue</strong></td><td>Simplest to test with Postman; POC drawings are processed one at a time by one user.</td><td>Resilience and throughput — a Premium Function plan's ~230s timeout caps how large/complex a drawing can be processed in one call; this does not survive to batch volumes (Full architecture NFR: 200 drawings/package).</td></tr>
           </tbody>
         </table></div>
       </section>
@@ -224,8 +250,10 @@ flowchart LR
             <tr><td><span class="mono">BalloonDetector</span></td><td>Calls Document Intelligence layout, isolates enclosed/circled numeric tokens as balloon candidates.</td></tr>
             <tr><td><span class="mono">ExtractionOrchestrator</span></td><td>Builds the Azure OpenAI request (image + DI text layer + JSON schema), invokes the model, validates the response.</td></tr>
             <tr><td><span class="mono">ToleranceNormalizer</span></td><td>Post-processes raw tolerance strings into a normalized shape regardless of source notation.</td></tr>
-            <tr><td><span class="mono">ExcelWriter</span></td><td>Maps normalized field objects onto the configured template's column layout.</td></tr>
+            <tr><td><span class="mono">ExcelWriter</span></td><td>Maps normalized field objects onto the configured template's column layout — now only invoked from the export endpoint, after sign-off, never from the extraction call itself.</td></tr>
             <tr><td><span class="mono">JobStore</span></td><td>Thin wrapper over Table Storage for job status read/write.</td></tr>
+            <tr><td><span class="mono">ReconciliationService</span></td><td>The state machine behind the reconciliation gate: seeds a <span class="mono">pending</span> record per balloon on extraction, applies <span class="mono">confirm</span>/<span class="mono">correct</span>/<span class="mono">cannot_determine</span> reviews (enforcing segregation of duties and, once signed off, refusing further changes), and gates sign-off/export on 100% of balloons being <span class="mono">reconciled</span>.</td></tr>
+            <tr><td><span class="mono">ReconciliationStore</span></td><td>One JSON blob per job (<span class="mono">reconciliation/{jobId}.json</span>) — the record round-trips through the same pydantic models it's built from, so there's no separate schema to keep in sync; not a relational store, same rationale as <span class="mono">JobStore</span>'s.</td></tr>
           </tbody>
         </table></div>
 
@@ -259,8 +287,17 @@ flowchart LR
         <p><strong>REST/HTTP over Azure Functions HTTP triggers.</strong> No GraphQL, gRPC, or WebSockets — a POC with one caller (a tester and Postman/a minimal upload page) has no client-diversity or subscription requirement that would justify anything beyond plain synchronous REST.</p>
 
         <h3 class="sub-head">3.2 Endpoints</h3>
-        <p><strong><span class="mono">POST /api/drawings/extract</span></strong> — uploads and processes one drawing synchronously.</p>
-        <p><strong>Auth:</strong> <span class="mono">x-functions-key</span> header (Function-level key) — not a production auth mechanism.</p>
+        <p><strong><span class="mono">POST /api/drawings/extract</span></strong> — uploads and extracts one drawing synchronously. Produces a draft, not a deliverable — see §1.3.</p>
+        <p><strong>Auth:</strong> shared-secret header (<span class="mono">x-functions-key</span> on the Azure Functions build; <span class="mono">x-api-key</span> on the current Vercel build). Not a production auth mechanism — see Full architecture §3.3.</p>
+        <span class="code-label">Request — multipart/form-data</span>
+        <div class="twrap"><table>
+          <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><span class="mono">file</span></td><td>binary</td><td>PDF or PNG/JPEG/TIFF, ≤ 25 MB</td></tr>
+            <tr><td><span class="mono">templateId</span></td><td>string (optional)</td><td>Defaults to <span class="mono">as9102-form3</span></td></tr>
+            <tr><td><span class="mono">submittedBy</span></td><td>string (optional)</td><td>Self-declared identity, recorded so the reconciliation gate can enforce segregation of duties</td></tr>
+          </tbody>
+        </table></div>
         <span class="code-label">Response 200 OK</span>
         <pre class="code">{
   "jobId": "b3f1c9e2-...",
@@ -273,6 +310,7 @@ flowchart LR
     {
       "balloonNumber": 12,
       "page": 1,
+      "boundingBox": [0.41, 0.22, 0.46, 0.27],
       "nominalValue": 25.4,
       "unit": "mm",
       "toleranceType": "bilateral",
@@ -289,14 +327,40 @@ flowchart LR
       "confidence": 0.81
     }
   ],
-  "exportUrl": "https://bdxpocsa.blob.core.windows.net/exports/b3f1.../characteristics.xlsx?sv=...(SAS, 1hr)"
+  "exportUrl": null,
+  "reconciliation": {
+    "totalBalloons": 47,
+    "pending": 47,
+    "reconciled": 0,
+    "cannotDetermine": 0,
+    "percentComplete": 0,
+    "readyForSignoff": false,
+    "signedOff": false
+  }
 }</pre>
-        <p><strong>Status codes:</strong> <span class="mono">200</span> success · <span class="mono">400</span> bad file · <span class="mono">422</span> quality threshold not met · <span class="mono">413</span> too many pages · <span class="mono">502</span> upstream Azure AI failure after retries.</p>
+        <p><span class="mono">exportUrl</span> is always <span class="mono">null</span> on this response now — see §1.3.</p>
+        <p><strong>Status codes:</strong> <span class="mono">200</span> success · <span class="mono">400</span> bad file · <span class="mono">422</span> quality threshold not met · <span class="mono">413</span> too many pages · <span class="mono">502</span> upstream AI service failure after retries.</p>
 
-        <p style="margin-top:1.5rem"><strong><span class="mono">GET /api/drawings/{jobId}</span></strong> — re-fetches a previously computed result (Table Storage lookup; no re-processing). Same response shape; <span class="mono">404</span> if unknown or expired (§4.3 retention).</p>
+        <p style="margin-top:1.5rem"><strong><span class="mono">GET /api/drawings/{jobId}</span></strong> — re-fetches a previously computed job record (Table Storage lookup; no re-processing).</p>
+        <p><strong>Response <span class="mono">200 OK</span>:</strong> the job record (counts, status, timestamps) — not the balloon list; that's <span class="mono">GET .../reconciliation</span> below. <span class="mono">404</span> if <span class="mono">jobId</span> unknown or its blob retention window (§4.3) has expired.</p>
+
+        <p style="margin-top:1.5rem"><strong><span class="mono">GET /api/drawings/{jobId}/reconciliation</span></strong> — full reconciliation state, every balloon; what a review UI loads to render the side-by-side view (FR-21).</p>
+        <p><strong>Response <span class="mono">200 OK</span>:</strong> the reconciliation record — <span class="mono">submittedBy</span>, <span class="mono">signedOff</span>/<span class="mono">signedOffBy</span>/<span class="mono">signedOffAt</span>, and per balloon: <span class="mono">status</span> (<span class="mono">pending</span>/<span class="mono">reconciled</span>/<span class="mono">cannotDetermine</span>), the immutable <span class="mono">extracted</span> value, the <span class="mono">reviewed</span> value if any, <span class="mono">discrepancy</span>, <span class="mono">reviewerId</span>, <span class="mono">reviewedAt</span>, <span class="mono">notes</span>.</p>
+
+        <p style="margin-top:1.5rem"><strong><span class="mono">POST /api/drawings/{jobId}/balloons/{page}/{balloonNumber}/review</span></strong> — confirms, corrects, or flags one balloon. Keyed on <span class="mono">(page, balloonNumber)</span>, not balloon number alone — numbering can restart per page.</p>
+        <p><strong>Request:</strong> <span class="mono">{ "reviewerId": "...", "action": "confirm" | "correct" | "cannot_determine", "correctedValue"?: {...}, "notes"?: "..." }</span>. <span class="mono">correctedValue</span> is required for <span class="mono">correct</span>; <span class="mono">notes</span> is required for <span class="mono">cannot_determine</span> (FR-25).</p>
+        <p><strong>Status codes:</strong> <span class="mono">200</span> updated · <span class="mono">400</span> malformed action/missing required field, or the drawing is already signed off · <span class="mono">403</span> <span class="mono">reviewerId</span> matches the job's <span class="mono">submittedBy</span> (FR-22) · <span class="mono">404</span> unknown job or balloon.</p>
+
+        <p style="margin-top:1.5rem"><strong><span class="mono">POST /api/drawings/{jobId}/signoff</span></strong> — locks the record once every balloon is <span class="mono">reconciled</span> (FR-24, FR-26).</p>
+        <p><strong>Request:</strong> <span class="mono">{ "signerId": "..." }</span>.</p>
+        <p><strong>Status codes:</strong> <span class="mono">200</span> signed off · <span class="mono">403</span> <span class="mono">signerId</span> matches <span class="mono">submittedBy</span> · <span class="mono">409</span> one or more balloons still open — response includes the exact <span class="mono">openBalloons: [{page, balloonNumber}]</span> list (FR-24's completion indicator, surfaced as an error rather than a separate polled endpoint).</p>
+
+        <p style="margin-top:1.5rem"><strong><span class="mono">POST /api/drawings/{jobId}/export</span></strong> — only reachable after sign-off (FR-18).</p>
+        <p><strong>Response <span class="mono">200 OK</span>:</strong> <span class="mono">{ "jobId": "...", "exportUrl": "..." }</span> — generated from the reconciled values (reviewer corrections win over the model's original output), confidence stamped to 1.0.</p>
+        <p><strong>Status codes:</strong> <span class="mono">409</span> not yet signed off, same <span class="mono">openBalloons</span> shape as sign-off's 409.</p>
 
         <h3 class="sub-head">3.3 Authentication &amp; Authorization</h3>
-        <p>None beyond the Azure Functions key. There is exactly one implicit role (tester/operator). Explicitly flagged as a gap to close before any non-throwaway use — see the Full architecture's Entra ID model.</p>
+        <p>None beyond the shared-secret header. There is exactly one implicit role (tester/operator) at the <em>app-access</em> layer. The reconciliation gate (above) adds a second, orthogonal and equally unauthenticated layer on top: <span class="mono">reviewerId</span>/<span class="mono">signerId</span>/<span class="mono">submittedBy</span> are self-declared strings the app compares to each other for segregation of duties, not identities it verifies — seeing <span class="mono">403</span> proves two different names were typed in, not that two different people did the work. Both gaps are explicitly flagged, not overlooked — see the Full architecture's Entra ID model.</p>
       </section>
 
       <section id="h4">
@@ -308,7 +372,8 @@ flowchart LR
           <thead><tr><th>Store</th><th>Purpose</th></tr></thead>
           <tbody>
             <tr><td>Blob container <span class="mono">raw-drawings</span></td><td>Original uploaded files, keyed by <span class="mono">{jobId}/source.pdf</span>.</td></tr>
-            <tr><td>Blob container <span class="mono">exports</span></td><td>Generated <span class="mono">.xlsx</span> files, keyed by <span class="mono">{jobId}/characteristics.xlsx</span>.</td></tr>
+            <tr><td>Blob container <span class="mono">exports</span></td><td>Generated <span class="mono">.xlsx</span> files, keyed by <span class="mono">{jobId}/characteristics.xlsx</span> — only written after sign-off now, not on every extraction.</td></tr>
+            <tr><td>Blob container <span class="mono">reconciliation</span></td><td>One JSON blob per job, keyed by <span class="mono">{jobId}.json</span> — the full reconciliation record (§2.1's <span class="mono">ReconciliationStore</span>); this is the new addition.</td></tr>
             <tr><td>Azure Table Storage <span class="mono">jobs</span></td><td>One row per job: filename, status, drawing number/revision, balloon counts, avg confidence, timestamps, error reason.</td></tr>
           </tbody>
         </table></div>
@@ -329,7 +394,11 @@ flowchart LR
         <div class="sec-head"><span class="balloon">5</span><h2>What This POC Does Not Answer</h2></div>
         <div class="callout warn">
           <span class="lbl">Not validated by a successful spike</span>
-          <p>Multi-user concurrency, the reconciliation/sign-off workflow, authentication/authorization, batch throughput at production volume, cost-at-scale, export-control/data-residency handling, and Excel template configurability beyond one hard-coded layout. All addressed in the <a href="architecture-full.html">Full production architecture</a>.</p>
+          <p>Multi-user concurrency, real authentication/authorization (both at the app-access layer and for reconciliation identity — see §3.3), batch throughput at production volume, cost-at-scale, export-control/data-residency handling, and Excel template configurability beyond one hard-coded layout. All addressed in the <a href="architecture-full.html">Full production architecture</a>.</p>
+        </div>
+        <div class="callout note">
+          <span class="lbl">No longer on this list, since the last revision</span>
+          <p>The reconciliation/sign-off workflow itself — it's implemented (§1.3, §3.2), just in a deliberately simplified single-reviewer form. What's <em>still</em> not answered about it specifically: the full two-human-reviewer/disagreement-resolution design (§1.4 trade-off #3), and a "cannot determine" balloon actually routing to a drawing owner (FR-25 says "route to"; this build records the flag and stops there — nothing paged, emailed, or reassigned).</p>
         </div>
       </section>
     </main>
