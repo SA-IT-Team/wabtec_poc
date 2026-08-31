@@ -122,6 +122,9 @@ class ReconciliationRecord(BaseModel):
     drawing_number: Optional[str] = None
     revision: Optional[str] = None
     submitted_by: Optional[str] = None  # self-declared; see reconciliation.py's module docstring
+    # Export template chosen at upload time (src/excel_templates.py); None means "use the
+    # registry's default". The export endpoint may still override it per call -- see app.py.
+    template_id: Optional[str] = None
     balloons: list[BalloonReviewRecord]
     signed_off: bool = False
     signed_off_by: Optional[str] = None

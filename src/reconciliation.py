@@ -61,15 +61,21 @@ class ReconciliationService:
         revision: Optional[str],
         balloons: list[ExtractedBalloon],
         submitted_by: Optional[str] = None,
+        template_id: Optional[str] = None,
     ) -> ReconciliationRecord:
         """Seeds a fresh reconciliation record right after extraction -- every balloon starts
         `pending`. Overwrites any existing record for this job_id (extraction only ever runs once
-        per job_id in this pipeline, so there's nothing to protect against re-running here)."""
+        per job_id in this pipeline, so there's nothing to protect against re-running here).
+
+        `template_id` is the export template chosen at upload time (src/excel_templates.py) --
+        remembered here so a later export defaults to it without the caller having to resupply it,
+        though the export endpoint may still override it per call (see app.py)."""
         record = ReconciliationRecord(
             job_id=job_id,
             drawing_number=drawing_number,
             revision=revision,
             submitted_by=submitted_by or None,
+            template_id=template_id or None,
             balloons=[
                 BalloonReviewRecord(page=b.page, balloon_number=b.balloon_number, extracted=b)
                 for b in balloons
@@ -202,6 +208,14 @@ class ReconciliationService:
                 )
             )
         return sorted(finalized, key=lambda b: (b.page, b.balloon_number))
+
+    def get_extracted_balloons(self, job_id: str) -> list[ExtractedBalloon]:
+        """The raw AI output for every balloon, untouched by any human review -- for the export's
+        "Extracted" tab (src/excel_writer.py), so a reviewer/auditor can see what the model
+        actually produced next to what a human confirmed or corrected (FR-27 traceability).
+        Unlike get_reconciled_balloons, this is available at any point, sign-off or not."""
+        record = self._store.load(job_id)
+        return sorted((b.extracted for b in record.balloons), key=lambda b: (b.page, b.balloon_number))
 
     @staticmethod
     def parse_review_request(

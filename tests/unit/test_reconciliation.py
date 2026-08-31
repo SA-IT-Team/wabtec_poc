@@ -35,6 +35,16 @@ def test_start_seeds_every_balloon_as_pending(service):
     assert record.signed_off is False
 
 
+def test_start_remembers_the_template_id_chosen_at_upload(service):
+    record = service.start("job-1", "DWG-1", "A", [_balloon(1)], template_id="generic-flat")
+    assert record.template_id == "generic-flat"
+
+
+def test_start_leaves_template_id_none_when_not_given(service):
+    record = service.start("job-1", "DWG-1", "A", [_balloon(1)])
+    assert record.template_id is None
+
+
 def test_get_status_before_any_review(service):
     service.start("job-1", "DWG-1", "A", [_balloon(1), _balloon(2)])
 
@@ -244,6 +254,42 @@ class TestGetReconciledBalloons:
         finalized = service.get_reconciled_balloons("job-1")
 
         assert [(b.page, b.balloon_number) for b in finalized] == [(1, 1), (1, 2), (2, 1)]
+
+
+class TestGetExtractedBalloons:
+    def test_returns_the_raw_ai_values_unaffected_by_a_correction(self, service):
+        service.start("job-1", "DWG-1", "A", [_balloon(1, nominal=25.4)])
+        service.review_balloon(
+            "job-1", page=1, balloon_number=1, reviewer_id="bob",
+            action=ReviewAction.CORRECT, corrected=_balloon(1, nominal=25.5),
+        )
+
+        [extracted] = service.get_extracted_balloons("job-1")
+
+        assert extracted.nominal_value == 25.4  # the model's original output, not the reviewer's correction
+        assert extracted.confidence == 0.9  # not bumped to 1.0 the way get_reconciled_balloons's output is
+
+    def test_available_before_signoff_and_before_any_review(self, service):
+        service.start("job-1", "DWG-1", "A", [_balloon(1), _balloon(2)])
+
+        # unlike get_reconciled_balloons, this doesn't raise IncompleteReconciliationError
+        extracted = service.get_extracted_balloons("job-1")
+
+        assert len(extracted) == 2
+
+    def test_results_are_sorted_by_page_then_balloon_number(self, service):
+        service.start(
+            "job-1", "DWG-1", "A",
+            [_balloon(2, page=1), _balloon(1, page=1), _balloon(1, page=2)],
+        )
+
+        extracted = service.get_extracted_balloons("job-1")
+
+        assert [(b.page, b.balloon_number) for b in extracted] == [(1, 1), (1, 2), (2, 1)]
+
+    def test_raises_job_not_found_for_unknown_job(self, service):
+        with pytest.raises(JobNotFoundError):
+            service.get_extracted_balloons("does-not-exist")
 
 
 class TestParseReviewRequest:

@@ -9,7 +9,6 @@ from src.ai_clients import AzureDocumentIntelligenceClient, ClaudeChatClient
 from src.balloon_detector import BalloonDetector
 from src.chat_assistant import ChatAssistant
 from src.config import Settings
-from src.excel_writer import ExcelWriter
 from src.extraction_orchestrator import ExtractionOrchestrator, VisionGroundedExtractionStrategy
 from src.job_store import TableStorageJobStore
 from src.pipeline import ExtractionPipeline
@@ -34,7 +33,6 @@ def build_pipeline(settings: Settings) -> tuple[ExtractionPipeline, TableStorage
         balloon_detector=BalloonDetector(di_client),
         orchestrator=ExtractionOrchestrator(VisionGroundedExtractionStrategy(chat_client)),
         normalizer=ToleranceNormalizer(),
-        excel_writer=ExcelWriter(),
     )
     job_store = TableStorageJobStore(settings.storage_connection_string)
     blob_service = BlobServiceClient.from_connection_string(settings.storage_connection_string)

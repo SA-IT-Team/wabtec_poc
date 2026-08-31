@@ -1,6 +1,8 @@
 """Integration tests: wire DrawingPreprocessor -> BalloonDetector -> ExtractionOrchestrator ->
-ToleranceNormalizer -> ExcelWriter together exactly as app.py does, using Fake* Azure
-clients (no network calls) so the whole pipeline is exercised end-to-end in-process.
+ToleranceNormalizer together exactly as app.py's extraction routes do, using Fake* Azure clients
+(no network calls) so the whole pipeline is exercised end-to-end in-process. Excel generation is
+no longer part of the pipeline itself (see pipeline.py's module docstring) -- the reconciliation ->
+export test below exercises ExcelWriter directly, the same way app.py's export route does.
 """
 from __future__ import annotations
 
@@ -30,7 +32,6 @@ def _build_pipeline(di_client, chat_client) -> ExtractionPipeline:
         balloon_detector=BalloonDetector(di_client),
         orchestrator=ExtractionOrchestrator(VisionGroundedExtractionStrategy(chat_client)),
         normalizer=ToleranceNormalizer(),
-        excel_writer=ExcelWriter(),
     )
 
 
@@ -38,7 +39,7 @@ def _job() -> JobRecord:
     return JobRecord(job_id="job-int-1", file_name="dwg.pdf", status=JobStatus.PROCESSING, created_at=datetime.now(timezone.utc))
 
 
-def test_end_to_end_happy_path_produces_matching_counts_and_valid_excel(
+def test_end_to_end_happy_path_produces_matching_counts(
     make_pdf_bytes, sample_layout, sample_extraction_response
 ):
     di_client = FakeDocumentAnalysisClient(sample_layout)
@@ -50,16 +51,12 @@ def test_end_to_end_happy_path_produces_matching_counts_and_valid_excel(
         drawing_number="DWG-10245", revision="C",
     )
     ctx = pipeline.run(ctx)
-    result = ExtractionPipeline.to_result(ctx, export_url="https://example.blob/exports/job-int-1.xlsx")
+    result = ExtractionPipeline.to_result(ctx, export_url=None)  # extraction never produces an export_url -- see app.py
 
     assert result.balloon_count_detected == 2  # balloons 12 and 13 from the fixture layout
     assert result.balloon_count_extracted == 2
     assert result.balloon_count_mismatch is False
     assert {b.balloon_number for b in result.balloons} == {12, 13}
-
-    wb = load_workbook(io.BytesIO(ctx.excel_bytes))
-    ws = wb.active
-    assert ws.max_row == 3  # header + 2 balloon rows
 
 
 def test_model_missing_a_detected_balloon_is_surfaced_not_dropped(
@@ -134,8 +131,11 @@ def test_extraction_through_reconciliation_to_export_end_to_end(make_pdf_bytes, 
     )
     ctx = pipeline.run(ctx)  # balloons 12 (nominal 25.4) and 13 (a GD&T-only balloon), per the fixture
 
-    record = reconciliation.start("job-int-1", ctx.drawing_number, ctx.revision, ctx.balloons, submitted_by="alice")
+    record = reconciliation.start(
+        "job-int-1", ctx.drawing_number, ctx.revision, ctx.balloons, submitted_by="alice", template_id="generic-flat"
+    )
     assert all(b.status.value == "pending" for b in record.balloons)
+    assert record.template_id == "generic-flat"  # remembered from upload, used as export's default
 
     # export is blocked before any review happens at all
     with pytest.raises(IncompleteReconciliationError):
@@ -161,7 +161,15 @@ def test_extraction_through_reconciliation_to_export_end_to_end(make_pdf_bytes, 
     reconciliation.sign_off("job-int-1", "bob")
 
     finalized = reconciliation.get_reconciled_balloons("job-int-1")
-    excel_bytes = ExcelWriter().write(drawing_number=ctx.drawing_number, revision=ctx.revision, balloons=finalized)
+    extracted = reconciliation.get_extracted_balloons("job-int-1")
+    record = reconciliation.get_record("job-int-1")
+    excel_bytes = ExcelWriter().write(
+        drawing_number=ctx.drawing_number,
+        revision=ctx.revision,
+        reconciled_balloons=finalized,
+        extracted_balloons=extracted,
+        template_id=record.template_id,
+    )
 
     corrected_row = next(b for b in finalized if b.balloon_number == 13)
     assert corrected_row.nominal_value == 12.7  # the reviewer's correction, not the AI's original value
@@ -169,4 +177,16 @@ def test_extraction_through_reconciliation_to_export_end_to_end(make_pdf_bytes, 
     assert all(b.confidence == 1.0 for b in finalized)
 
     wb = load_workbook(io.BytesIO(excel_bytes))
-    assert wb.active.max_row == 3  # header + 2 reconciled balloon rows
+    assert wb.sheetnames == ["Reconciled", "Extracted"]
+    # generic-flat has no title block for either tab
+    assert wb["Reconciled"].max_row == 3  # header + 2 reconciled balloon rows
+    assert wb["Extracted"].max_row == 3  # header + 2 raw-extracted balloon rows
+
+    # the Extracted tab shows the AI's original (unreviewed) value for balloon 13 -- it never had a
+    # nominal_value at all, just a GD&T frame (see sample_extraction_response.json); the Reconciled
+    # tab shows the reviewer's correction instead.
+    nominal_col = 5  # balloon_number, drawing_number, revision, page, nominal_value (see excel_templates.GENERIC_FLAT)
+    extracted_row = next(r for r in wb["Extracted"].iter_rows(min_row=2) if r[0].value == 13)
+    reconciled_row = next(r for r in wb["Reconciled"].iter_rows(min_row=2) if r[0].value == 13)
+    assert extracted_row[nominal_col - 1].value is None
+    assert reconciled_row[nominal_col - 1].value == 12.7

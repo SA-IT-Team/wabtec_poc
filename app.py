@@ -17,6 +17,7 @@ non-framework) Vercel convention this app doesn't use. See deployment-vercel.md.
     POST /api/drawings/<jobId>/export                                     -- generate the Excel, only once signed off
     POST /api/drawings/<jobId>/analyze                                     -- AI + rule-based feedback report (chatbot)
     POST /api/drawings/<jobId>/chat                                         -- free-form Q&A grounded in this job's data
+    GET  /api/templates                                                     -- list registered Excel export templates
     GET  /api/health                                                       -- unauthenticated liveness check
 
 Why two upload paths: Vercel Functions cap request/response bodies at 4.5MB (platform limit, not
@@ -64,6 +65,7 @@ from flask import Flask, Response, jsonify, request
 load_dotenv()
 
 from src.config import Settings
+from src.excel_templates import get_template, list_templates
 from src.excel_writer import ExcelWriter
 from src.exceptions import (
     BalloonNotFoundError,
@@ -73,6 +75,7 @@ from src.exceptions import (
     PageLimitExceededError,
     QualityThresholdError,
     SegregationOfDutiesError,
+    UnknownTemplateError,
     UnsupportedFileTypeError,
     ValidationError,
 )
@@ -144,6 +147,8 @@ def _map_domain_error(exc: Exception):
         return _json_error(
             "IncompleteReconciliation", str(exc), 409, openBalloons=[{"page": p, "balloonNumber": n} for p, n in exc.open_balloons]
         )
+    if isinstance(exc, UnknownTemplateError):
+        return _json_error("UnknownTemplate", str(exc), 400)
     if isinstance(exc, ValidationError):
         return _json_error("ValidationError", str(exc), 400)
     if isinstance(exc, ExtractionServiceError):
@@ -158,7 +163,9 @@ def _finish_extraction(
 ):
     """Tail end of both extraction paths: seed the reconciliation record (every balloon starts
     `pending`) and shape the draft response -- no export happens here anymore, see module docstring."""
-    reconciliation_service.start(job.job_id, ctx.drawing_number, ctx.revision, ctx.balloons, submitted_by)
+    reconciliation_service.start(
+        job.job_id, ctx.drawing_number, ctx.revision, ctx.balloons, submitted_by, template_id=ctx.template_id
+    )
 
     job.status = JobStatus.COMPLETE
     job.balloon_count_detected = ctx.balloon_count_detected
@@ -194,12 +201,16 @@ def extract_drawing():
     submitted_by = request.form.get("submittedBy") or None
 
     try:
+        # Resolved (and validated) up front, before spending a Document Intelligence/Claude call
+        # on a request that would fail at export time anyway -- see src/excel_templates.py.
+        template_id = get_template(request.form.get("templateId") or None).template_id
+
         pipeline, job_store, blob_service = build_pipeline(settings)
         reconciliation_service = build_reconciliation_service(settings)
         upload_handler = UploadHandler(lambda name: get_container(blob_service, name), job_store)
         job = upload_handler.handle_upload(file_bytes=file_bytes, file_name=uploaded.filename, content_type=content_type)
 
-        ctx = PipelineContext(job=job, file_bytes=file_bytes, content_type=content_type)
+        ctx = PipelineContext(job=job, file_bytes=file_bytes, content_type=content_type, template_id=template_id)
         ctx = pipeline.run(ctx)
 
         return _finish_extraction(reconciliation_service, job_store, job, ctx, submitted_by)
@@ -271,6 +282,8 @@ def process_drawing(job_id: str):
         return _json_error("ValidationError", "Request body must include 'blobPath' and 'contentType'.", 400)
 
     try:
+        template_id = get_template(payload.get("templateId") or None).template_id
+
         pipeline, job_store, blob_service = build_pipeline(settings)
         reconciliation_service = build_reconciliation_service(settings)
         job = job_store.get(job_id)
@@ -278,7 +291,7 @@ def process_drawing(job_id: str):
         file_bytes = read_blob_bytes(blob_service, "raw-drawings", blob_path)
         validate_file(file_bytes, content_type)
 
-        ctx = PipelineContext(job=job, file_bytes=file_bytes, content_type=content_type)
+        ctx = PipelineContext(job=job, file_bytes=file_bytes, content_type=content_type, template_id=template_id)
         ctx = pipeline.run(ctx)
 
         return _finish_extraction(reconciliation_service, job_store, job, ctx, submitted_by)
@@ -376,19 +389,35 @@ def sign_off(job_id: str):
 @_require_api_key
 def export_drawing(job_id: str):
     """Only reachable once every balloon is reconciled and the drawing is signed off (FR-18) --
-    IncompleteReconciliationError maps to 409 with the list of what's still open."""
+    IncompleteReconciliationError maps to 409 with the list of what's still open.
+
+    Exports using the templateId chosen at upload (stored on the reconciliation record), or an
+    optional `{"templateId": "..."}` in this call's own JSON body to override it -- an unknown id
+    either way maps to 400, see src/excel_templates.py. The workbook always carries both the
+    human-verified "Reconciled" tab and, alongside it, an "Extracted" tab with the AI's raw output
+    for comparison -- FR-27 traceability, see src/excel_writer.py."""
     try:
         settings = Settings.from_env()
     except RuntimeError as exc:
         logger.exception("Configuration error")
         return _json_error("ConfigurationError", str(exc), 500)
 
+    payload = request.get_json(silent=True) or {}
+    template_override = payload.get("templateId") or None
+
     try:
         reconciliation_service = build_reconciliation_service(settings)
-        balloons = reconciliation_service.get_reconciled_balloons(job_id)  # raises if not signed off
+        reconciled_balloons = reconciliation_service.get_reconciled_balloons(job_id)  # raises if not signed off
+        extracted_balloons = reconciliation_service.get_extracted_balloons(job_id)
         record = reconciliation_service.get_record(job_id)
 
-        excel_bytes = ExcelWriter().write(drawing_number=record.drawing_number, revision=record.revision, balloons=balloons)
+        excel_bytes = ExcelWriter().write(
+            drawing_number=record.drawing_number,
+            revision=record.revision,
+            reconciled_balloons=reconciled_balloons,
+            extracted_balloons=extracted_balloons,
+            template_id=template_override or record.template_id,
+        )
         blob_service = BlobServiceClient.from_connection_string(settings.storage_connection_string)
         export_url = write_export_and_get_sas(blob_service, job_id, excel_bytes, settings.storage_connection_string)
 
@@ -397,6 +426,17 @@ def export_drawing(job_id: str):
         return _json_error("NotFound", f"No job found for id '{job_id}'.", 404)
     except Exception as exc:  # noqa: BLE001 - mapped by type inside _map_domain_error
         return _map_domain_error(exc)
+
+
+@app.route("/api/templates", methods=["GET", "OPTIONS"])
+@_require_api_key
+def get_templates():
+    """Lists registered Excel export templates (src/excel_templates.py) so a client can offer a
+    real choice instead of a freeform templateId text field."""
+    templates = [
+        {"templateId": t.template_id, "name": t.name, "description": t.description} for t in list_templates()
+    ]
+    return jsonify({"templates": templates, "defaultTemplateId": get_template(None).template_id}), 200
 
 
 @app.route("/api/drawings/<job_id>/analyze", methods=["POST", "OPTIONS"])

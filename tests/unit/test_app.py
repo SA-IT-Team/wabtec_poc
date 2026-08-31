@@ -10,6 +10,7 @@ import io
 from datetime import datetime, timezone
 
 import pytest
+from openpyxl import load_workbook
 
 import app as vercel_app
 from src.ai_clients import FakeChatCompletionClient
@@ -57,7 +58,6 @@ class _FakePipeline:
     def run(self, ctx):
         ctx.balloons = [ExtractedBalloon(balloon_number=1, page=1, nominal_value=25.4, confidence=0.9)]
         ctx.balloon_count_detected = 1
-        ctx.excel_bytes = b"fake-xlsx-bytes"
         return ctx
 
 
@@ -138,6 +138,21 @@ def test_extract_happy_path_returns_200_draft_with_pending_reconciliation(client
     assert body["reconciliation"]["pending"] == 1
     assert body["reconciliation"]["ready_for_signoff"] is False
     assert body["reconciliation"]["signed_off"] is False
+
+
+def test_extract_rejects_an_unknown_template_id(client, monkeypatch):
+    monkeypatch.setattr(vercel_app, "build_pipeline", lambda settings: (_FakePipeline(), InMemoryJobStore(), object()))
+    monkeypatch.setattr(vercel_app, "get_container", lambda blob_service, name: _FakeContainer())
+
+    resp = client.post(
+        "/api/drawings/extract",
+        data={"file": (io.BytesIO(b"%PDF-1.4 fake"), "dwg.pdf", "application/pdf"), "templateId": "not-a-real-template"},
+        headers={"x-api-key": "test-shared-secret"},
+        content_type="multipart/form-data",
+    )
+
+    assert resp.status_code == 400
+    assert resp.json["error"] == "UnknownTemplate"
 
 
 def test_extract_maps_document_intelligence_outage_to_502(client, monkeypatch):
@@ -291,7 +306,9 @@ def _fake_blob_service_client_factory():
 # ---------------------------------------------------------------------------------------
 
 
-def _seed_extracted_job(client, monkeypatch, submitted_by: str | None = None) -> str:
+def _seed_extracted_job(
+    client, monkeypatch, submitted_by: str | None = None, template_id: str | None = None
+) -> str:
     """Runs a real extract call (fake pipeline) so a job + its reconciliation record both exist
     (against a shared in-memory reconciliation store the test can keep driving), and returns the
     new job's id."""
@@ -303,6 +320,8 @@ def _seed_extracted_job(client, monkeypatch, submitted_by: str | None = None) ->
     data = {"file": (io.BytesIO(b"%PDF-1.4 fake"), "dwg.pdf", "application/pdf")}
     if submitted_by:
         data["submittedBy"] = submitted_by
+    if template_id:
+        data["templateId"] = template_id
     resp = client.post(
         "/api/drawings/extract", data=data, headers={"x-api-key": "test-shared-secret"}, content_type="multipart/form-data"
     )
@@ -421,6 +440,118 @@ def test_full_reconciliation_flow_review_signoff_then_export(client, monkeypatch
 
     assert export_resp.status_code == 200
     assert export_resp.json["exportUrl"] == "https://example/export.xlsx"
+
+
+def test_template_chosen_at_upload_is_remembered_on_the_reconciliation_record(client, monkeypatch):
+    job_id = _seed_extracted_job(client, monkeypatch, template_id="generic-flat")
+
+    resp = client.get(f"/api/drawings/{job_id}/reconciliation", headers={"x-api-key": "test-shared-secret"})
+
+    assert resp.status_code == 200
+    assert resp.get_json()["template_id"] == "generic-flat"
+
+
+def _sign_off_job(client, job_id: str) -> None:
+    client.post(
+        f"/api/drawings/{job_id}/balloons/1/1/review",
+        json={"reviewerId": "bob", "action": "confirm"},
+        headers={"x-api-key": "test-shared-secret"},
+    )
+    signoff_resp = client.post(
+        f"/api/drawings/{job_id}/signoff", json={"signerId": "bob"}, headers={"x-api-key": "test-shared-secret"}
+    )
+    assert signoff_resp.status_code == 200
+
+
+def _capture_exported_workbook(monkeypatch):
+    """Monkeypatches the blob-upload step to capture the exported bytes instead of writing them
+    anywhere, so the test can load the real workbook ExcelWriter produced and inspect it."""
+    captured: dict = {}
+
+    def _fake_write_export(blob_service, job_id, excel_bytes, conn_str):
+        captured["excel_bytes"] = excel_bytes
+        return "https://example/export.xlsx"
+
+    monkeypatch.setattr(vercel_app, "write_export_and_get_sas", _fake_write_export)
+    monkeypatch.setattr(vercel_app, "BlobServiceClient", _fake_blob_service_client_factory())
+    return captured
+
+
+def test_export_uses_the_template_chosen_at_upload_by_default(client, monkeypatch):
+    job_id = _seed_extracted_job(client, monkeypatch, submitted_by="alice", template_id="generic-flat")
+    _sign_off_job(client, job_id)
+    captured = _capture_exported_workbook(monkeypatch)
+
+    resp = client.post(f"/api/drawings/{job_id}/export", headers={"x-api-key": "test-shared-secret"})
+
+    assert resp.status_code == 200
+    wb = load_workbook(io.BytesIO(captured["excel_bytes"]))
+    # generic-flat has no title block, so its own header ("Balloon #") sits in row 1 -- confirms
+    # the uploaded template was used, not the AS9102 default.
+    assert wb.active.cell(row=1, column=1).value == "Balloon #"
+
+
+def test_export_request_body_overrides_the_uploaded_template(client, monkeypatch):
+    # Uploaded with no explicit template (defaults to as9102-form3), but this export call asks for
+    # generic-flat instead -- the override should win.
+    job_id = _seed_extracted_job(client, monkeypatch, submitted_by="alice")
+    _sign_off_job(client, job_id)
+    captured = _capture_exported_workbook(monkeypatch)
+
+    resp = client.post(
+        f"/api/drawings/{job_id}/export",
+        json={"templateId": "generic-flat"},
+        headers={"x-api-key": "test-shared-secret"},
+    )
+
+    assert resp.status_code == 200
+    wb = load_workbook(io.BytesIO(captured["excel_bytes"]))
+    assert wb.active.cell(row=1, column=1).value == "Balloon #"
+
+
+def test_export_produces_both_a_reconciled_and_an_extracted_tab(client, monkeypatch):
+    job_id = _seed_extracted_job(client, monkeypatch, submitted_by="alice", template_id="generic-flat")
+    _sign_off_job(client, job_id)
+    captured = _capture_exported_workbook(monkeypatch)
+
+    resp = client.post(f"/api/drawings/{job_id}/export", headers={"x-api-key": "test-shared-secret"})
+
+    assert resp.status_code == 200
+    wb = load_workbook(io.BytesIO(captured["excel_bytes"]))
+    assert wb.sheetnames == ["Reconciled", "Extracted"]
+    assert wb.active.title == "Reconciled"
+    # both tabs use the same (generic-flat) layout
+    assert wb["Extracted"].cell(row=1, column=1).value == "Balloon #"
+
+
+def test_export_rejects_an_unknown_template_override(client, monkeypatch):
+    job_id = _seed_extracted_job(client, monkeypatch, submitted_by="alice")
+    _sign_off_job(client, job_id)
+    _capture_exported_workbook(monkeypatch)
+
+    resp = client.post(
+        f"/api/drawings/{job_id}/export",
+        json={"templateId": "not-a-real-template"},
+        headers={"x-api-key": "test-shared-secret"},
+    )
+
+    assert resp.status_code == 400
+    assert resp.json["error"] == "UnknownTemplate"
+
+
+def test_get_templates_lists_the_registered_templates(client):
+    resp = client.get("/api/templates", headers={"x-api-key": "test-shared-secret"})
+
+    assert resp.status_code == 200
+    body = resp.get_json()
+    ids = {t["templateId"] for t in body["templates"]}
+    assert ids == {"as9102-form3", "generic-flat"}
+    assert body["defaultTemplateId"] == "as9102-form3"
+
+
+def test_get_templates_requires_api_key(client):
+    resp = client.get("/api/templates")
+    assert resp.status_code == 401
 
 
 def test_signoff_403s_when_signer_is_the_submitter(client, monkeypatch):

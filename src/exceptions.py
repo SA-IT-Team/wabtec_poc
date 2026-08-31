@@ -21,6 +21,11 @@ class QualityThresholdError(ValidationError):
     """Raised when a page/image falls below the configured DPI/quality floor (FR-03). Maps to HTTP 422."""
 
 
+class UnknownTemplateError(ValidationError):
+    """Raised when a caller specifies an export `templateId` that isn't registered in
+    src/excel_templates.py. Maps to HTTP 400 -- see GET /api/templates for the valid set."""
+
+
 class PageLimitExceededError(ValidationError):
     """Raised when a document has more pages than the configured per-request cap. Maps to HTTP 413."""
 
