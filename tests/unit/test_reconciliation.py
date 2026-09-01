@@ -232,6 +232,28 @@ class TestGetReconciledBalloons:
         assert final.confidence == 1.0  # human-verified, not the raw AI confidence
         assert "reviewer-corrected" in final.notes
 
+    def test_confidence_reason_reflects_the_human_verified_confidence_not_the_stale_ai_one(self, service):
+        original = ExtractedBalloon(
+            balloon_number=1, nominal_value=25.4, confidence=0.4, confidence_reason="Digit partly smudged."
+        )
+        service.start("job-1", "DWG-1", "A", [original])
+        service.review_balloon("job-1", page=1, balloon_number=1, reviewer_id="bob", action=ReviewAction.CONFIRM)
+        service.sign_off("job-1", "bob")
+
+        [final] = service.get_reconciled_balloons("job-1")
+
+        assert "human-verified via reconciliation" in final.confidence_reason
+        assert "Digit partly smudged." in final.confidence_reason  # original AI reasoning kept as context
+
+    def test_confidence_reason_is_set_even_when_the_ai_never_gave_one(self, service):
+        service.start("job-1", "DWG-1", "A", [_balloon(1)])  # no confidence_reason on the original
+        service.review_balloon("job-1", page=1, balloon_number=1, reviewer_id="bob", action=ReviewAction.CONFIRM)
+        service.sign_off("job-1", "bob")
+
+        [final] = service.get_reconciled_balloons("job-1")
+
+        assert final.confidence_reason == "Confidence set to 1.0: value is human-verified via reconciliation."
+
     def test_uses_the_extracted_value_when_the_reviewer_confirmed_it_unchanged(self, service):
         service.start("job-1", "DWG-1", "A", [_balloon(1, nominal=25.4)])
         service.review_balloon("job-1", page=1, balloon_number=1, reviewer_id="bob", action=ReviewAction.CONFIRM)

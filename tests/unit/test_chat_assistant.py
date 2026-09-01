@@ -143,6 +143,17 @@ class TestAsk:
         assert any("what unit is balloon 1?" in c for c in contents)
         assert contents[-1] == "and the second one?"
 
+    def test_grounding_includes_the_models_confidence_reasoning(self):
+        fake = FakeChatCompletionClient(canned_text=["ok"])
+        assistant = ChatAssistant(fake)
+        record = _record(_balloon(1, confidence=0.4, confidence_reason="Digit obscured by a fold in the scan."))
+
+        assistant.ask(record, "why is balloon 1 low confidence?", history=[])
+
+        [call] = fake.chat_calls
+        contents = [m["content"] for m in call["messages"]]
+        assert any("Digit obscured by a fold in the scan." in c for c in contents)
+
     def test_ignores_malformed_history_entries(self):
         fake = FakeChatCompletionClient(canned_text=["ok"])
         assistant = ChatAssistant(fake)

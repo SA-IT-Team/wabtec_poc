@@ -198,10 +198,17 @@ class ReconciliationService:
         for b in record.balloons:
             source = b.reviewed if b.reviewed is not None else b.extracted
             note_suffix = " [reviewer-corrected]" if b.discrepancy else " [reviewer-confirmed]"
+            # The AI's own confidence_reason explained *its* score, which no longer applies once
+            # confidence is overridden to 1.0 below -- replace it rather than leave it stale, but
+            # keep it as context rather than discard it outright.
+            confidence_reason = "Confidence set to 1.0: value is human-verified via reconciliation."
+            if source.confidence_reason:
+                confidence_reason += f" Original AI reasoning: {source.confidence_reason}"
             finalized.append(
                 source.model_copy(
                     update={
                         "confidence": 1.0,
+                        "confidence_reason": confidence_reason,
                         "extraction_error": None,
                         "notes": f"{source.notes or ''}{note_suffix}".strip(),
                     }

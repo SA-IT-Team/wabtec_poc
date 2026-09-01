@@ -102,7 +102,15 @@ SYSTEM_PROMPT = (
     "balloon number, nominal dimension value and unit, tolerance (bilateral/unilateral/limit/general), "
     "and any GD&T feature control frame (symbol, value, modifiers, datums). Only report balloons you "
     "can actually see in the image; never invent a balloon number. If a value is illegible, set it to "
-    "null and lower your confidence for that field."
+    "null and lower your confidence for that field.\n\n"
+    "For every balloon, also fill confidence_reason with a short, specific, one-sentence "
+    "explanation of *why* you scored confidence the way you did -- not a restatement of the score. "
+    "Name the concrete thing that drove it: a smudge, glare, or overlapping leader line that made a "
+    "digit ambiguous; a value inferred from a general-tolerance note rather than read directly; a "
+    "callout partly cropped at the page edge; conflicting notation between the balloon and its "
+    "leader text; or, for a high-confidence balloon, that the digits/symbols were printed clearly "
+    "with no ambiguity. This field is required for every balloon, high confidence or low -- a "
+    "reviewer should never have to guess why a number is what it is."
 )
 
 # Name of the tool Claude is forced to call so its reply is structured JSON rather than prose --

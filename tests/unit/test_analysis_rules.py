@@ -120,6 +120,20 @@ class TestIncompleteData:
         assert finding.category == AnalysisFindingCategory.INCOMPLETE_DATA
         assert finding.severity == AnalysisFindingSeverity.WARNING
 
+    def test_low_confidence_finding_includes_the_models_own_reasoning_when_given(self):
+        record = _simple_record(_balloon(1, confidence=0.4, confidence_reason="Digit obscured by a fold in the scan."))
+
+        [finding] = run_checks(record)
+
+        assert "Digit obscured by a fold in the scan." in finding.detail
+
+    def test_low_confidence_finding_does_not_break_when_no_reasoning_was_given(self):
+        record = _simple_record(_balloon(1, confidence=0.4))
+
+        [finding] = run_checks(record)
+
+        assert "None" not in finding.detail
+
     def test_does_not_flag_confidence_at_or_above_threshold(self):
         record = _simple_record(_balloon(1, confidence=0.7))
 

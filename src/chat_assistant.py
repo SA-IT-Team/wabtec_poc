@@ -107,7 +107,7 @@ class ChatAssistant:
             "Signed off: " + (f"yes, by {record.signed_off_by}" if record.signed_off else "no"),
             f"Total balloons: {len(record.balloons)}",
             "",
-            "Balloons (sheet/page, number, nominal value+unit, tolerance, GD&T, confidence, review status, notes):",
+            "Balloons (sheet/page, number, nominal value+unit, tolerance, GD&T, confidence + why, review status, notes):",
         ]
         for b in sorted(record.balloons, key=lambda x: (x.page, x.balloon_number)):
             v = b.reviewed if b.reviewed is not None else b.extracted
@@ -123,6 +123,8 @@ class ChatAssistant:
             )
             corrected = " [reviewer-corrected]" if b.reviewed is not None and b.discrepancy else ""
             extra = ""
+            if b.extracted.confidence_reason:
+                extra += f" confidence_reason={b.extracted.confidence_reason!r}"
             if v.notes:
                 extra += f" notes={v.notes!r}"
             if b.extracted.extraction_error:

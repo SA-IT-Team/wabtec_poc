@@ -130,12 +130,15 @@ def _incomplete_data(balloons: list[BalloonReviewRecord]) -> list[AnalysisFindin
                 )
             )
         elif e.confidence < LOW_CONFIDENCE_THRESHOLD:
+            detail = f"Below the {LOW_CONFIDENCE_THRESHOLD:.0%} threshold this build treats as reliable -- worth a closer look at the source."
+            if e.confidence_reason:
+                detail += f" Model's own reasoning: {e.confidence_reason}"
             out.append(
                 AnalysisFinding(
                     category=AnalysisFindingCategory.INCOMPLETE_DATA,
                     severity=_severity_or_downgrade(b, AnalysisFindingSeverity.WARNING),
                     summary=f"Balloon {e.balloon_number} (p.{b.page}) was extracted with low confidence ({e.confidence:.0%})",
-                    detail=f"Below the {LOW_CONFIDENCE_THRESHOLD:.0%} threshold this build treats as reliable -- worth a closer look at the source.",
+                    detail=detail,
                     balloon_refs=[_ref(b)],
                 )
             )

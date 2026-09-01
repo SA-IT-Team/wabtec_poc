@@ -48,6 +48,11 @@ class ExtractedBalloon(BaseModel):
     surface_finish: Optional[str] = None
     notes: Optional[str] = None
     confidence: float = 0.0
+    # The model's own explanation of *why* it assigned that confidence -- what's clear, what's
+    # ambiguous/illegible, or inferred from context (see ai_clients.py's SYSTEM_PROMPT). Surfaced
+    # in the Notes column of every Excel export template (src/excel_templates.py) and the review
+    # UI's Notes column, so confidence isn't just a bare number a reviewer has to take on faith.
+    confidence_reason: Optional[str] = None
     # POC-specific bookkeeping fields -- not part of the AOAI response schema, set locally.
     extraction_error: Optional[str] = None
     blocked: bool = False

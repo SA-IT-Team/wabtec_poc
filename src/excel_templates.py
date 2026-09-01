@@ -32,10 +32,20 @@ class ExcelTemplate:
     title_block: bool = False
 
 
-def _generic_row_values(balloon: ExtractedBalloon, drawing_number: str | None, revision: str | None) -> dict:
-    notes = balloon.notes or ""
+def _compose_notes(balloon: ExtractedBalloon) -> str:
+    """Notes column content for every template: the extractor's own notes, then *why* the
+    confidence score is what it is (if the model gave a reason -- see models.py's
+    ExtractedBalloon.confidence_reason), then any hard extraction error last, so a reviewer reads
+    context before an error rather than after it."""
+    parts = [balloon.notes] if balloon.notes else []
+    if balloon.confidence_reason:
+        parts.append(f"[confidence: {balloon.confidence_reason}]")
     if balloon.extraction_error:
-        notes = f"{notes} [ERROR: {balloon.extraction_error}]".strip()
+        parts.append(f"[ERROR: {balloon.extraction_error}]")
+    return " ".join(parts)
+
+
+def _generic_row_values(balloon: ExtractedBalloon, drawing_number: str | None, revision: str | None) -> dict:
     return {
         "balloon_number": balloon.balloon_number,
         "drawing_number": drawing_number,
@@ -50,7 +60,7 @@ def _generic_row_values(balloon: ExtractedBalloon, drawing_number: str | None, r
         "gdt_value": balloon.gdt.value if balloon.gdt else None,
         "gdt_datums": ", ".join(balloon.gdt.datums) if balloon.gdt else None,
         "confidence": round(balloon.confidence, 2),
-        "notes": notes,
+        "notes": _compose_notes(balloon),
     }
 
 
@@ -102,15 +112,12 @@ def _describe_requirement(balloon: ExtractedBalloon) -> str:
 
 
 def _as9102_row_values(balloon: ExtractedBalloon, drawing_number: str | None, revision: str | None) -> dict:
-    notes = balloon.notes or ""
-    if balloon.extraction_error:
-        notes = f"{notes} [ERROR: {balloon.extraction_error}]".strip()
     return {
         "balloon_number": balloon.balloon_number,
         "page": f"Sheet {balloon.page}",
         "requirement": _describe_requirement(balloon),
         "confidence": round(balloon.confidence, 2),
-        "notes": notes,
+        "notes": _compose_notes(balloon),
     }
 
 

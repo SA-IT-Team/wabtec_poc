@@ -107,6 +107,8 @@ class ExtractionOrchestrator:
                         balloon_number=candidate["balloon_number"],
                         page=page_number,
                         confidence=0.0,
+                        confidence_reason="Not scored by the model at all -- this is a placeholder row so the "
+                        "balloon isn't silently dropped from the count, not a low-confidence read.",
                         extraction_error="Detected by layout analysis but not returned by the extraction model.",
                     )
                 )

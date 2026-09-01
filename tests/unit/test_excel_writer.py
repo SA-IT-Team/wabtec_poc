@@ -170,6 +170,31 @@ class TestGenericFlatTemplate:
         notes_col = [c for c, (key, _) in enumerate(GENERIC_FLAT.columns, start=1) if key == "notes"][0]
         assert "ERROR" in ws.cell(row=2, column=notes_col).value
 
+    def test_confidence_reason_is_surfaced_in_notes(self):
+        writer = ExcelWriter()
+        balloons = [
+            ExtractedBalloon(
+                balloon_number=1,
+                nominal_value=25.4,
+                confidence=0.4,
+                notes="reviewer flagged for a closer look",
+                confidence_reason="Digit partly obscured by a fold in the scan.",
+            )
+        ]
+
+        xlsx_bytes = writer.write(
+            drawing_number="DWG-1", revision="A", reconciled_balloons=balloons, template_id="generic-flat"
+        )
+        wb = load_workbook(io.BytesIO(xlsx_bytes))
+        ws = wb.active
+
+        notes_col = [c for c, (key, _) in enumerate(GENERIC_FLAT.columns, start=1) if key == "notes"][0]
+        notes_value = ws.cell(row=2, column=notes_col).value
+        assert "reviewer flagged for a closer look" in notes_value
+        assert "confidence: Digit partly obscured by a fold in the scan." in notes_value
+        # own notes come before the confidence reasoning, in that order
+        assert notes_value.index("reviewer flagged") < notes_value.index("confidence:")
+
     def test_no_title_block(self):
         writer = ExcelWriter()
         xlsx_bytes = writer.write(drawing_number="DWG-1", revision="A", reconciled_balloons=[], template_id="generic-flat")
@@ -256,3 +281,17 @@ class TestAs9102Form3Template:
 
         req_col = [c for c, (key, _) in enumerate(AS9102_FORM3.columns, start=1) if key == "requirement"][0]
         assert "[general]" in ws.cell(row=6, column=req_col).value
+
+    def test_confidence_reason_is_surfaced_in_notes(self):
+        writer = ExcelWriter()
+        balloon = ExtractedBalloon(
+            balloon_number=5, nominal_value=1.0, confidence=0.5, confidence_reason="Leader line overlaps an adjacent callout."
+        )
+        xlsx_bytes = writer.write(
+            drawing_number="DWG-1", revision="A", reconciled_balloons=[balloon], template_id="as9102-form3"
+        )
+        wb = load_workbook(io.BytesIO(xlsx_bytes))
+        ws = wb.active
+
+        notes_col = [c for c, (key, _) in enumerate(AS9102_FORM3.columns, start=1) if key == "notes"][0]
+        assert "confidence: Leader line overlaps an adjacent callout." in ws.cell(row=6, column=notes_col).value

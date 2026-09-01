@@ -50,6 +50,7 @@ def test_gives_up_after_max_repair_attempts_and_falls_back_to_detected_candidate
     assert [b.balloon_number for b in balloons] == [12, 13]
     assert all(b.confidence == 0.0 for b in balloons)
     assert all(b.extraction_error for b in balloons)
+    assert all(b.confidence_reason for b in balloons)  # never a bare 0.0 with no explanation
 
 
 def test_transport_failure_propagates_immediately_without_repair(sample_layout):
