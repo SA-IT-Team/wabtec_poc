@@ -15,6 +15,8 @@ from src.pipeline import ExtractionPipeline
 from src.preprocessor import DrawingPreprocessor
 from src.reconciliation import ReconciliationService
 from src.reconciliation_store import BlobReconciliationStore
+from src.title_block_extractor import TitleBlockExtractor
+from src.title_block_vision_reader import TitleBlockVisionReader
 from src.tolerance_normalizer import ToleranceNormalizer
 
 
@@ -33,6 +35,8 @@ def build_pipeline(settings: Settings) -> tuple[ExtractionPipeline, TableStorage
         balloon_detector=BalloonDetector(di_client),
         orchestrator=ExtractionOrchestrator(VisionGroundedExtractionStrategy(chat_client)),
         normalizer=ToleranceNormalizer(),
+        title_block_extractor=TitleBlockExtractor(),
+        title_block_vision_reader=TitleBlockVisionReader(chat_client),
     )
     job_store = TableStorageJobStore(settings.storage_connection_string)
     blob_service = BlobServiceClient.from_connection_string(settings.storage_connection_string)

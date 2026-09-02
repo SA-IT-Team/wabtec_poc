@@ -21,6 +21,8 @@ from src.pipeline import ExtractionPipeline, PipelineContext
 from src.preprocessor import DrawingPreprocessor
 from src.reconciliation import ReconciliationService
 from src.reconciliation_store import InMemoryReconciliationStore
+from src.title_block_extractor import TitleBlockExtractor
+from src.title_block_vision_reader import TitleBlockVisionReader
 from src.tolerance_normalizer import ToleranceNormalizer
 
 import pytest
@@ -32,6 +34,8 @@ def _build_pipeline(di_client, chat_client) -> ExtractionPipeline:
         balloon_detector=BalloonDetector(di_client),
         orchestrator=ExtractionOrchestrator(VisionGroundedExtractionStrategy(chat_client)),
         normalizer=ToleranceNormalizer(),
+        title_block_extractor=TitleBlockExtractor(),
+        title_block_vision_reader=TitleBlockVisionReader(chat_client),
     )
 
 
@@ -57,6 +61,66 @@ def test_end_to_end_happy_path_produces_matching_counts(
     assert result.balloon_count_extracted == 2
     assert result.balloon_count_mismatch is False
     assert {b.balloon_number for b in result.balloons} == {12, 13}
+
+
+def test_title_block_is_read_from_the_drawing_when_not_pre_supplied(make_pdf_bytes, sample_extraction_response):
+    """FR-02 end-to-end: PipelineContext.drawing_number/.revision used to stay null forever --
+    nothing in the pipeline ever set them. This reproduces the standard SIZE/DWG.NO./REV title
+    block corner (SolidWorks' and most mechanical CAD tools' default sheet format), with each cell
+    OCR'd as its own line -- confirmed against a real drawing to be how Document Intelligence
+    actually segments this layout, not just a guess -- and confirms the pipeline now reads it, with
+    no drawing_number/revision pre-supplied on the context this time."""
+    layout_with_title_block = {
+        "lines": [
+            {"content": "TITLE"},
+            {"content": "Counterweight Wheel"},
+            {"content": "SIZE"},
+            {"content": "DWG. NO."},
+            {"content": "REV"},
+            {"content": "B"},
+            {"content": "CW-2045"},
+            {"content": "A"},
+            {"content": "SCALE: 1:1  WEIGHT: 604.55  SHEET 1 OF 1"},
+        ],
+        "words": [],
+    }
+    di_client = FakeDocumentAnalysisClient(layout_with_title_block)
+    chat_client = FakeChatCompletionClient([sample_extraction_response])
+    pipeline = _build_pipeline(di_client, chat_client)
+
+    ctx = PipelineContext(job=_job(), file_bytes=make_pdf_bytes(page_count=1), content_type="application/pdf")
+    ctx = pipeline.run(ctx)
+
+    assert ctx.drawing_number == "CW-2045"
+    assert ctx.revision == "A"
+
+
+def test_title_block_falls_back_to_vision_when_the_regex_heuristic_finds_nothing(
+    make_pdf_bytes, sample_extraction_response
+):
+    """A title block layout the regex heuristic doesn't recognize at all (no SIZE/DWG.NO./REV
+    corner, no inline "LABEL: value" text) -- the regex correctly comes up empty, and the pipeline
+    falls back to asking the vision model to read the title block directly off the page image."""
+    layout_with_no_recognizable_title_block = {
+        "lines": [
+            {"content": "Widget 001"},
+            {"content": "U.O.S Lengths ±0.25 Angles ±5°"},
+            {"content": "Scale 1:1"},
+        ],
+        "words": [],
+    }
+    di_client = FakeDocumentAnalysisClient(layout_with_no_recognizable_title_block)
+    chat_client = FakeChatCompletionClient(
+        canned_responses=[sample_extraction_response],
+        canned_structured=[{"drawing_number": "ABT-W001", "revision": None}],
+    )
+    pipeline = _build_pipeline(di_client, chat_client)
+
+    ctx = PipelineContext(job=_job(), file_bytes=make_pdf_bytes(page_count=1), content_type="application/pdf")
+    ctx = pipeline.run(ctx)
+
+    assert ctx.drawing_number == "ABT-W001"
+    assert ctx.revision is None  # this drawing genuinely has no revision field -- not a failure
 
 
 def test_model_missing_a_detected_balloon_is_surfaced_not_dropped(
