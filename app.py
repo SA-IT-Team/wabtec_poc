@@ -364,6 +364,29 @@ def review_balloon(job_id: str, page: int, balloon_number: int):
         return _map_domain_error(exc)
 
 
+@app.route("/api/drawings/<job_id>/confirm-all", methods=["POST", "OPTIONS"])
+@_require_api_key
+def confirm_all_pending(job_id: str):
+    """Bulk "Confirm all": confirms every still-pending balloon in one call -- see
+    ReconciliationService.confirm_all_pending. Body: {"reviewerId": "..."}. Returns the full
+    updated reconciliation record."""
+    try:
+        settings = Settings.from_env()
+    except RuntimeError as exc:
+        logger.exception("Configuration error")
+        return _json_error("ConfigurationError", str(exc), 500)
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        service = build_reconciliation_service(settings)
+        updated = service.confirm_all_pending(job_id, str(payload.get("reviewerId") or ""))
+        return Response(updated.model_dump_json(), status=200, mimetype="application/json")
+    except JobNotFoundError:
+        return _json_error("NotFound", f"No job found for id '{job_id}'.", 404)
+    except Exception as exc:  # noqa: BLE001 - mapped by type inside _map_domain_error
+        return _map_domain_error(exc)
+
+
 @app.route("/api/drawings/<job_id>/signoff", methods=["POST", "OPTIONS"])
 @_require_api_key
 def sign_off(job_id: str):

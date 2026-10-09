@@ -62,6 +62,58 @@ def test_get_status_raises_job_not_found_for_unknown_job(service):
         service.get_status("does-not-exist")
 
 
+class TestConfirmAllPending:
+    def test_confirms_every_pending_balloon_in_one_call(self, service):
+        service.start("job-1", "DWG-1", "A", [_balloon(1), _balloon(2), _balloon(1, page=2)])
+
+        record = service.confirm_all_pending("job-1", "bob")
+
+        assert all(b.status == BalloonReviewStatus.RECONCILED for b in record.balloons)
+        assert all(b.reviewer_id == "bob" and b.reviewed_at is not None for b in record.balloons)
+        assert all(b.discrepancy is False and b.reviewed == b.extracted for b in record.balloons)
+        # persisted, not just returned
+        assert service.get_status("job-1").pending == 0
+
+    def test_leaves_corrected_and_flagged_balloons_untouched(self, service):
+        service.start("job-1", "DWG-1", "A", [_balloon(1), _balloon(2), _balloon(3)])
+        service.review_balloon(
+            "job-1", page=1, balloon_number=1, reviewer_id="carol", action=ReviewAction.CORRECT,
+            corrected=_balloon(1, nominal=99.0),
+        )
+        service.review_balloon(
+            "job-1", page=1, balloon_number=2, reviewer_id="carol", action=ReviewAction.CANNOT_DETERMINE, notes="smudged",
+        )
+
+        record = service.confirm_all_pending("job-1", "bob")
+        by_number = {b.balloon_number: b for b in record.balloons}
+
+        assert by_number[1].reviewed.nominal_value == 99.0 and by_number[1].reviewer_id == "carol"
+        assert by_number[2].status == BalloonReviewStatus.CANNOT_DETERMINE and by_number[2].notes == "smudged"
+        assert by_number[3].status == BalloonReviewStatus.RECONCILED and by_number[3].reviewer_id == "bob"
+
+    def test_rejects_missing_reviewer_id(self, service):
+        service.start("job-1", "DWG-1", "A", [_balloon(1)])
+        with pytest.raises(ValidationError, match="reviewerId"):
+            service.confirm_all_pending("job-1", "  ")
+
+    def test_segregation_of_duties_blocks_the_submitter(self, service):
+        service.start("job-1", "DWG-1", "A", [_balloon(1)], submitted_by="alice")
+        with pytest.raises(SegregationOfDutiesError):
+            service.confirm_all_pending("job-1", "alice")
+        assert service.get_status("job-1").pending == 1
+
+    def test_rejected_after_signoff(self, service):
+        service.start("job-1", "DWG-1", "A", [_balloon(1)])
+        service.confirm_all_pending("job-1", "bob")
+        service.sign_off("job-1", "bob")
+        with pytest.raises(ValidationError, match="already been signed off"):
+            service.confirm_all_pending("job-1", "bob")
+
+    def test_unknown_job_raises_job_not_found(self, service):
+        with pytest.raises(JobNotFoundError):
+            service.confirm_all_pending("does-not-exist", "bob")
+
+
 class TestReviewBalloon:
     def test_confirm_marks_reconciled_with_no_discrepancy(self, service):
         service.start("job-1", "DWG-1", "A", [_balloon(1)])

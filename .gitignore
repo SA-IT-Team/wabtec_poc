@@ -7,3 +7,4 @@ htmlcov/
 .env
 .env.local
 .vercel/
+.env.new-susbgroup

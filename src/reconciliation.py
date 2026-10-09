@@ -95,31 +95,14 @@ class ReconciliationService:
         corrected: Optional[ExtractedBalloon] = None,
         notes: Optional[str] = None,
     ) -> BalloonReviewRecord:
-        if not reviewer_id or not reviewer_id.strip():
-            raise ValidationError("reviewerId is required.")
-
-        record = self._store.load(job_id)  # raises JobNotFoundError
-
-        if record.signed_off:
-            raise ValidationError(
-                "This drawing has already been signed off; balloon reviews can no longer be changed. "
-                "The exported record must stay identical to what was signed off."
-            )
-
-        if record.submitted_by and reviewer_id.strip() == record.submitted_by.strip():
-            raise SegregationOfDutiesError(
-                f"Reviewer '{reviewer_id}' must differ from the analyst who submitted this drawing "
-                f"('{record.submitted_by}')."
-            )
+        record = self._load_for_review(job_id, reviewer_id)
 
         target = next((b for b in record.balloons if b.page == page and b.balloon_number == balloon_number), None)
         if target is None:
             raise BalloonNotFoundError(f"No balloon {balloon_number} on page {page} for job '{job_id}'.")
 
         if action == ReviewAction.CONFIRM:
-            target.reviewed = target.extracted.model_copy()
-            target.discrepancy = False
-            target.status = BalloonReviewStatus.RECONCILED
+            self._apply_confirm(target)
         elif action == ReviewAction.CORRECT:
             if corrected is None:
                 raise ValidationError("action 'correct' requires a 'correctedValue' payload.")
@@ -141,6 +124,53 @@ class ReconciliationService:
 
         self._store.save(record)
         return target
+
+    def confirm_all_pending(self, job_id: str, reviewer_id: str) -> ReconciliationRecord:
+        """Confirms every still-`pending` balloon as extracted, in one load + one save -- the bulk
+        form of review_balloon(action=confirm), with exactly the same guards (reviewer required,
+        not after sign-off, segregation of duties). Balloons a reviewer already corrected or
+        flagged are left untouched. Exists because doing this one HTTP call per balloon costs a
+        full blob read+write each (~1s apiece on a real drawing), and those calls can't safely run
+        in parallel: each one saves the whole record, so concurrent writes would overwrite each
+        other's changes."""
+        record = self._load_for_review(job_id, reviewer_id)
+        now = datetime.now(timezone.utc)
+        for target in record.balloons:
+            if target.status != BalloonReviewStatus.PENDING:
+                continue
+            self._apply_confirm(target)
+            target.reviewer_id = reviewer_id.strip()
+            target.reviewed_at = now
+            target.notes = None
+        self._store.save(record)
+        return record
+
+    def _load_for_review(self, job_id: str, reviewer_id: str) -> ReconciliationRecord:
+        """Shared guards for any review write: returns the record only if `reviewer_id` may
+        change it right now."""
+        if not reviewer_id or not reviewer_id.strip():
+            raise ValidationError("reviewerId is required.")
+
+        record = self._store.load(job_id)  # raises JobNotFoundError
+
+        if record.signed_off:
+            raise ValidationError(
+                "This drawing has already been signed off; balloon reviews can no longer be changed. "
+                "The exported record must stay identical to what was signed off."
+            )
+
+        if record.submitted_by and reviewer_id.strip() == record.submitted_by.strip():
+            raise SegregationOfDutiesError(
+                f"Reviewer '{reviewer_id}' must differ from the analyst who submitted this drawing "
+                f"('{record.submitted_by}')."
+            )
+        return record
+
+    @staticmethod
+    def _apply_confirm(target: BalloonReviewRecord) -> None:
+        target.reviewed = target.extracted.model_copy()
+        target.discrepancy = False
+        target.status = BalloonReviewStatus.RECONCILED
 
     def get_record(self, job_id: str) -> ReconciliationRecord:
         """Full reconciliation state, every balloon -- what a review UI loads to render the

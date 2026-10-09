@@ -344,6 +344,40 @@ def test_review_balloon_confirm_marks_reconciled(client, monkeypatch):
     assert body["reviewer_id"] == "bob"
 
 
+def test_confirm_all_marks_every_pending_balloon_reconciled(client, monkeypatch):
+    job_id = _seed_extracted_job(client, monkeypatch)
+
+    resp = client.post(
+        f"/api/drawings/{job_id}/confirm-all",
+        json={"reviewerId": "bob"},
+        headers={"x-api-key": "test-shared-secret"},
+    )
+
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["balloons"]
+    assert all(b["status"] == "reconciled" and b["reviewer_id"] == "bob" for b in body["balloons"])
+
+
+def test_confirm_all_requires_a_reviewer(client, monkeypatch):
+    job_id = _seed_extracted_job(client, monkeypatch)
+
+    resp = client.post(f"/api/drawings/{job_id}/confirm-all", json={}, headers={"x-api-key": "test-shared-secret"})
+
+    assert resp.status_code == 400
+    assert resp.json["error"] == "ValidationError"
+
+
+def test_confirm_all_404s_for_unknown_job(client, monkeypatch):
+    _patch_reconciliation(monkeypatch)
+
+    resp = client.post(
+        "/api/drawings/does-not-exist/confirm-all", json={"reviewerId": "bob"}, headers={"x-api-key": "test-shared-secret"}
+    )
+
+    assert resp.status_code == 404
+
+
 def test_review_balloon_rejects_invalid_action(client, monkeypatch):
     job_id = _seed_extracted_job(client, monkeypatch)
 
